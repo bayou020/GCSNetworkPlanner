@@ -8,25 +8,17 @@ QT       += core gui quick widgets quickwidgets qml serialport network svg print
 
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 
-TARGET = ../bin/NetworkPlannerGCS
+TARGET = bin/NetworkPlannerGCS
 TEMPLATE = app
 
 
-INCLUDEPATH= ../include \
-             ../include/dji_sdk \
-                src_qfi \
-                src_qfi/example \
-                dji_sdk/inc \
-                /OpenDDS3.12/include \
-INCLUDEPATH += /usr/local/include/sphinxbase\
-                /usr/local/include/pocketsphinx
-INCLUDEPATH += /usr/include/gstreamer-1.0/\
-               /usr/include/glib-2.0/\
-        /usr/lib/x86_64-linux-gnu/glib-2.0/include
-
-
-
-
+INCLUDEPATH += src_qfi \
+               src_qfi/example \
+               dji_sdk/inc \
+               QJoysticks/src \
+               QJoysticks/lib/SDL/include \
+               mavlink/mavlink/c_library_v2-master \
+               /opt/homebrew/include
 SOURCES += main.cpp\
     src_qfi/qfi_VSI.cpp \
     src_qfi/qfi_TC.cpp \
@@ -49,7 +41,21 @@ SOURCES += main.cpp\
     modem_decode.cpp \
     file_writer.cpp \
     logging.cpp \
-    mavlink/mav_gcs_manager.cpp
+    mavlink/mav_gcs_manager.cpp \
+    dji_sdk/src/DJI_API.cpp \
+    dji_sdk/src/DJI_App.cpp \
+    dji_sdk/src/DJI_Camera.cpp \
+    dji_sdk/src/DJI_Codec.cpp \
+    dji_sdk/src/DJI_Flight.cpp \
+    dji_sdk/src/DJI_Follow.cpp \
+    dji_sdk/src/DJI_HardDriver.cpp \
+    dji_sdk/src/DJI_HotPoint.cpp \
+    dji_sdk/src/DJI_Link.cpp \
+    dji_sdk/src/DJI_Logging.cpp \
+    dji_sdk/src/DJI_Memory.cpp \
+    dji_sdk/src/DJI_Mission.cpp \
+    dji_sdk/src/DJI_VirtualRC.cpp \
+    dji_sdk/src/DJI_WayPoint.cpp
 
 HEADERS  += \
     src_qfi/qfi_VSI.h \
@@ -88,11 +94,7 @@ DISTFILES += \
 FORMS +=
 
 LIBS +=  -L../bin/ \
-    -ldjisdk \
     -lSDL2
-LIBS += -L/usr/lib/x86_64-linux-gnu/gstreamer-1.0 -lgstreamer-1.0  -lgobject-2.0 -lglib-2.0 \
-                    -lgio-2.0
 
 
 include ($$PWD/QJoysticks/QJoysticks.pri)
-

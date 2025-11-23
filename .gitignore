@@ -1,0 +1,9 @@
+*.o
+bin/
+*.app
+*.user
+*.pro.user
+*.qmake.stash
+Makefile
+moc_*.cpp
+qrc_*.cpp

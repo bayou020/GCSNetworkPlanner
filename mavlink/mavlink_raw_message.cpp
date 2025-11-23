@@ -362,7 +362,9 @@ void Mavlink_Raw_Message::clearWP()
     mavlink_mission_clear_all_t clear;
     clear.target_component=MAV_COMP_ID_MISSIONPLANNER;
     clear.target_system=1;
+#ifdef MAV_MISSION_TYPE_MISSION
     clear.mission_type=MAV_MISSION_TYPE_MISSION;
+#endif
     mavlink_msg_mission_clear_all_encode(1,0,&message,&clear);
 }
 
@@ -372,7 +374,9 @@ void Mavlink_Raw_Message::countWP(int count)
     mavlink_mission_count_t count_msg;
     count_msg.target_component=MAV_COMP_ID_MISSIONPLANNER;
     count_msg.target_system=1;
+#ifdef MAV_MISSION_TYPE_MISSION
     count_msg.mission_type=MAV_MISSION_TYPE_MISSION;
+#endif
     count_msg.count=count;
     mavlink_msg_mission_count_encode(1,0,&message,&count_msg);
     dds_mavlink_encode(message);
@@ -897,4 +901,3 @@ void Mavlink_Raw_Message::imu_scaled_values(mavlink_message_t message_2d)
 
 
 }
-
