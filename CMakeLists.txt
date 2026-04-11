@@ -68,7 +68,6 @@ set(PROJECT_SOURCES
     src/network/modem_decode.cpp
     src/network/udpgcs.cpp
     src/plot/qmlplot.cpp
-    src/ui/flightinstrumentsimageprovider.cpp
     src/ui/joystickparameters.cpp
     src/weather/weather_service.cpp
     third_party/dji_sdk/src/DJI_API.cpp

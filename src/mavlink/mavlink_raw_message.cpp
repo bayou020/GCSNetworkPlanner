@@ -807,55 +807,37 @@ void Mavlink_Raw_Message::attitude_values(mavlink_message_t message_2d)
 
     mavlink_attitude_t attitude;
     mavlink_msg_attitude_decode(&message_2d, &attitude);
-    QString raw_msg ;
-    QVariant angle,angle2PI;
-    angle=QVariant(attitude.yaw);
-    angle2PI=QVariant(attitude.yaw+2*M_PI);
+    QString raw_msg;
+    const double normalizedYaw = attitude.yaw < 0 ? attitude.yaw + 2 * M_PI : attitude.yaw;
 
+    setVehicleStateValue(message_2d.sysid, "yawRadians", normalizedYaw);
+    setVehicleStateValue(message_2d.sysid, "pitchRadians", attitude.pitch);
+    setVehicleStateValue(message_2d.sysid, "rollRadians", attitude.roll);
 
-    emit guiattitudepitch(raw_msg.setNum((attitude.pitch)));
-    if (attitude.yaw <0)
-
+    if (message_2d.sysid != targetSystemId)
     {
-
-        emit guiattitudeyaw(raw_msg.setNum((attitude.yaw)+ 2*M_PI));
-        emit angleCoordinate(angle2PI);
-
-        emit attitudegauges((attitude.yaw)+2*M_PI,attitude.pitch);
-
-        emit attitudeyaw((attitude.yaw)+2*M_PI);
-        emit attitudedoubleyaw((double)((attitude.yaw)+2*M_PI));
-
-        yawPlot=((attitude.yaw)+2*M_PI);
-        emit qmlYawPitchRollSignal(raw_msg.setNum((attitude.yaw)+ 2*M_PI),raw_msg.setNum((attitude.pitch)),raw_msg.setNum((attitude.roll)));
-
-    }
-    else
-    {
-        emit guiattitudeyaw(raw_msg.setNum((attitude.yaw)));
-
-        emit attitudegauges((attitude.yaw),attitude.pitch);
-
-        emit angleCoordinate(angle);
-        emit attitudeyaw((attitude.yaw));
-        yawPlot=(attitude.yaw);
-        emit attitudeyaw((double)(attitude.yaw));
-        //qDebug()<<attitude.yaw<< "yaw";
-        emit qmlYawPitchRollSignal(raw_msg.setNum((attitude.yaw)),raw_msg.setNum((attitude.pitch)),raw_msg.setNum((attitude.roll)));
-
+        return;
     }
 
-    emit guiattituderoll(raw_msg.setNum((attitude.roll)));
+    emit guiattitudepitch(raw_msg.setNum(attitude.pitch));
+    emit guiattitudeyaw(raw_msg.setNum(normalizedYaw));
+    emit guiattituderoll(raw_msg.setNum(attitude.roll));
 
+    emit angleCoordinate(QVariant(normalizedYaw));
+    emit attitudegauges(normalizedYaw, attitude.pitch);
+    emit attitudeyaw(normalizedYaw);
+    emit attitudedoubleyaw(normalizedYaw);
+    emit attitudepitch(attitude.pitch);
+    emit attituderoll(attitude.roll);
+    emit qmlYawPitchRollSignal(raw_msg.setNum(normalizedYaw),
+                               raw_msg.setNum(attitude.pitch),
+                               raw_msg.setNum(attitude.roll));
 
-    // qDebug()<<  qRadiansToDegrees(attitude.roll);
-
-
-
-    emit attitudepitch((attitude.pitch));
-    emit attituderoll((attitude.roll));
-    QList <float> parIndex;
-    parIndex.insert(1,attitude.pitch);parIndex.insert(2,yawPlot);parIndex.insert(3,attitude.roll);
+    yawPlot = normalizedYaw;
+    QList<float> parIndex;
+    parIndex.insert(1, attitude.pitch);
+    parIndex.insert(2, yawPlot);
+    parIndex.insert(3, attitude.roll);
     emit plotParameters(parIndex);
 
 
@@ -940,6 +922,10 @@ void Mavlink_Raw_Message::syncSelectedVehicleSignals()
 
     const QVariant latitudeValue = state.value("latitude");
     const QVariant longitudeValue = state.value("longitude");
+    const QVariant altitudeValue = state.value("altitudeMeters");
+    const QVariant yawValue = state.value("yawRadians");
+    const QVariant pitchValue = state.value("pitchRadians");
+    const QVariant rollValue = state.value("rollRadians");
     if (latitudeValue.isValid() && longitudeValue.isValid())
     {
         latitude = latitudeValue;
@@ -951,6 +937,46 @@ void Mavlink_Raw_Message::syncSelectedVehicleSignals()
         latitude = 0;
         longitude = 0;
         emit signalCoordinate(latitude, longitude);
+    }
+
+    if (altitudeValue.isValid())
+    {
+        emit gpsaltituderaw(altitudeValue.toDouble());
+    }
+
+    if (yawValue.isValid())
+    {
+        const double selectedYaw = yawValue.toDouble();
+        emit guiattitudeyaw(QString::number(selectedYaw));
+        emit angleCoordinate(QVariant(selectedYaw));
+        emit attitudeyaw(selectedYaw);
+        emit attitudedoubleyaw(selectedYaw);
+
+        if (pitchValue.isValid())
+        {
+            emit attitudegauges(selectedYaw, pitchValue.toFloat());
+        }
+    }
+
+    if (pitchValue.isValid())
+    {
+        const float selectedPitch = pitchValue.toFloat();
+        emit guiattitudepitch(QString::number(selectedPitch));
+        emit attitudepitch(selectedPitch);
+    }
+
+    if (rollValue.isValid())
+    {
+        const float selectedRoll = rollValue.toFloat();
+        emit guiattituderoll(QString::number(selectedRoll));
+        emit attituderoll(selectedRoll);
+    }
+
+    if (yawValue.isValid() && pitchValue.isValid() && rollValue.isValid())
+    {
+        emit qmlYawPitchRollSignal(QString::number(yawValue.toDouble()),
+                                   QString::number(pitchValue.toDouble()),
+                                   QString::number(rollValue.toDouble()));
     }
 }
 

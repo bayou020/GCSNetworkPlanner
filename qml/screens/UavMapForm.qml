@@ -32,6 +32,10 @@ Item
     property real batteryPercentage: -1
     property real batteryVoltage: -1
     property real batteryCourrant: -1
+    property real flightHeadingDeg: 0
+    property real flightPitchDeg: 0
+    property real flightRollDeg: 0
+    property real flightAltitudeMeters: 0
     property string mavlinkVehicleType: "--"
     property string mavlinkSystemStatus: "--"
     property var mavlinkLatitude: null
@@ -120,6 +124,7 @@ Item
         }
 
         if (simulationFeed.hasSelectedUav) {
+            item1.refreshFlightHudFromSelectedVehicle()
             item1.windowNetwork.showSimulationParameters(item1.mergedSelectedVehicleData())
             item1.windowNetwork.visible = true
             return
@@ -132,6 +137,75 @@ Item
         }
 
         item1.windowNetwork.clearSimulationParameters()
+    }
+
+    function updateFlightHeading(yawRadians)
+    {
+        if (typeof simulationFeed !== "undefined"
+                && simulationFeed !== null
+                && simulationFeed.hasSelectedUav) {
+            return
+        }
+        const normalized = Number(yawRadians)
+        if (!isNaN(normalized)) {
+            item1.flightHeadingDeg = ((normalized * 180 / Math.PI) % 360 + 360) % 360
+        }
+    }
+
+    function updateFlightPitch(pitchRadians)
+    {
+        if (typeof simulationFeed !== "undefined"
+                && simulationFeed !== null
+                && simulationFeed.hasSelectedUav) {
+            return
+        }
+        const normalized = Number(pitchRadians)
+        if (!isNaN(normalized)) {
+            item1.flightPitchDeg = normalized * 180 / Math.PI
+        }
+    }
+
+    function updateFlightRoll(rollRadians)
+    {
+        if (typeof simulationFeed !== "undefined"
+                && simulationFeed !== null
+                && simulationFeed.hasSelectedUav) {
+            return
+        }
+        const normalized = Number(rollRadians)
+        if (!isNaN(normalized)) {
+            item1.flightRollDeg = normalized * 180 / Math.PI
+        }
+    }
+
+    function updateFlightAltitude(altitudeMeters)
+    {
+        if (typeof simulationFeed !== "undefined"
+                && simulationFeed !== null
+                && simulationFeed.hasSelectedUav) {
+            return
+        }
+        const normalized = Number(altitudeMeters)
+        if (!isNaN(normalized)) {
+            item1.flightAltitudeMeters = normalized
+        }
+    }
+
+    function refreshFlightHudFromSelectedVehicle()
+    {
+        const data = item1.mergedSelectedVehicleData()
+        if (data.headingDegrees !== undefined && data.headingDegrees !== null) {
+            item1.flightHeadingDeg = Number(data.headingDegrees)
+        }
+        if (data.pitchRadians !== undefined && data.pitchRadians !== null) {
+            item1.flightPitchDeg = Number(data.pitchRadians) * 180 / Math.PI
+        }
+        if (data.rollRadians !== undefined && data.rollRadians !== null) {
+            item1.flightRollDeg = Number(data.rollRadians) * 180 / Math.PI
+        }
+        if (data.altitudeMeters !== undefined && data.altitudeMeters !== null) {
+            item1.flightAltitudeMeters = Number(data.altitudeMeters)
+        }
     }
 
     function formatVehicleMetric(value, decimals, unit)
@@ -803,12 +877,12 @@ Item
                 anchors.fill: parent
                 hoverEnabled: true
                 onClicked: {
-                    image_flight_instruments.visible=false
+                    flightHud.visible = false
                     windowPlanner.visible=true
                 }
 
                 onDoubleClicked: {
-                    image_flight_instruments.visible=true
+                    flightHud.visible = true
                     windowPlanner.visible=false
                 }
 
@@ -1046,17 +1120,16 @@ Item
 
 
 
-    Image {
-        id: image_flight_instruments
-        x: 525
-        cache: false
-        width: 170
-        height: 450
+    FlightHud {
+        id: flightHud
         anchors.top: parent.top
         anchors.topMargin: 8
         anchors.right: parent.right
         anchors.rightMargin: 8
-        source: "image://FlightInstrumentsImageProvider/zig"
+        headingDegrees: item1.flightHeadingDeg
+        pitchDegrees: item1.flightPitchDeg
+        rollDegrees: item1.flightRollDeg
+        altitudeMeters: item1.flightAltitudeMeters
     }
 
 
@@ -1493,16 +1566,6 @@ Item
             }
         }
     }
-    function updateFlightsInstruments()
-    {
-        if (image_flight_instruments.source === "image://FlightInstrumentsImageProvider/zag")
-            image_flight_instruments.source = "image://FlightInstrumentsImageProvider/zig"
-        else
-            image_flight_instruments.source = "image://FlightInstrumentsImageProvider/zag"
-    }
-
-
-
     function createUdpConnect()
     {
         item1.componentDds = Qt.createComponent("qrc:/UdpConnect.qml")
@@ -1519,7 +1582,7 @@ Item
         item1.windowNetwork    = componentNetwork.createObject(item1)
         item1.windowNetwork.anchors.right = item1.right
         item1.windowNetwork.anchors.rightMargin = 16
-        item1.windowNetwork.anchors.top = image_flight_instruments.bottom
+        item1.windowNetwork.anchors.top = flightHud.bottom
         item1.windowNetwork.anchors.topMargin = 10
         item1.windowNetwork.anchors.bottom = item1.bottom
         item1.windowNetwork.anchors.bottomMargin = 16

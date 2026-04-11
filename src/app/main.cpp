@@ -7,7 +7,6 @@
 #include <QTimer>
 #include <QtQuick/QSGRendererInterface>
 
-#include "flightinstrumentsimageprovider.h"
 #include "udpgcs.h"
 #include "djigcs.h"
 #include <QJoysticks.h>
@@ -47,8 +46,6 @@ int main(int argc, char *argv[])
     QCoreApplication::addLibraryPath(QStringLiteral(QMAPLIBRE_PLUGIN_PATH));
 #endif
 
-    // loading flightinstruments
-    FlightInstrumentsImageProvider* fii = new FlightInstrumentsImageProvider();
     Mavlink_Raw_Message *mav_dec= new Mavlink_Raw_Message();
     SerialPortReader *serial=new SerialPortReader();
     JoystickParameters *joystick=new JoystickParameters();
@@ -95,7 +92,6 @@ int main(int argc, char *argv[])
     engine->rootContext()->setContextProperty("simulationFeed", simulationFeed);
     engine->rootContext()->setContextProperty("mapboxAccessToken", mapboxAccessToken);
     engine->rootContext()->setContextProperty("mapboxStyleUrl", mapboxStyleUrl);
-    engine->addImageProvider("FlightInstrumentsImageProvider", fii);
     w.setSource(QUrl(QStringLiteral("qrc:/UavMapForm.qml")));
     //log->setFileName();
 
@@ -129,14 +125,9 @@ int main(int argc, char *argv[])
 
     //QObject::connect(&meteo,SIGNAL(sizeCities()),item,SIGNAL(meteoSize()));
     QObject::connect(item,SIGNAL(plotIndexChanged(QVariant)),plot,SLOT(treatementQMLPlot(QVariant)),Qt::DirectConnection);
-    QObject::connect(fii,SIGNAL(sigUpdateFlightsInstruments()),item,SLOT(updateFlightsInstruments()),Qt::DirectConnection);
     QObject::connect(item,SIGNAL(newDdsArgumentsDJI(QVariant)),&dji,SLOT(init(QVariant)));
     QObject::connect(&dji,SIGNAL(connectionStatus(QVariant)),item,SLOT(connectionStatusUpdate(QVariant)));
     QObject::connect(mav_dec,SIGNAL(signalCoordinate(QVariant,QVariant)),item,SLOT(updateUavGPS(QVariant,QVariant)));
-    //    QObject::connect(&dji,SIGNAL(sigUpdateUavPitch(float)),fii,SLOT(updateUavPitch(float)));
-    //    QObject::connect(&dji,SIGNAL(sigUpdateUavRoll(float)),fii,SLOT(updateUavRoll(float)));
-    //    QObject::connect(&dji,SIGNAL(sigUpdateUavHeading(float)),fii,SLOT(updateUavHeading(float)));
-    //    QObject::connect(&dji,SIGNAL(sigUpdateUavAltitude(float)),fii,SLOT(updateUavAltitude(float)));
     //--------Mavlink__Gauges----------//
     QObject::connect(mav_dec,SIGNAL(attitudeyaw(float)),log,SLOT(writeInTheFileYaw(float)));
     QObject::connect(mav_dec,SIGNAL(attitudepitch(float)),log,SLOT(writeInTheFilePitch(float)));
@@ -145,14 +136,30 @@ int main(int argc, char *argv[])
     QObject::connect(mav_dec,SIGNAL(gpslatituderaw(double)),log,SLOT(writeInTheFileGPSLat(double)));
            QObject::connect(mav_dec,SIGNAL(gpslongtituderaw(double)),log,SLOT(writeInTheFileGPSLong(double)));
    //////////////////
-    QObject::connect(mav_dec,SIGNAL(attitudeyaw(float)),fii,SLOT(updateUavHeading(float)));
-    QObject::connect(mav_dec,SIGNAL(attitudepitch(float)),fii,SLOT(updateUavPitch(float)));
-    QObject::connect(mav_dec,SIGNAL(attituderoll(float)),fii,SLOT(updateUavRoll(float)));
-    QObject::connect(mav_dec, &Mavlink_Raw_Message::gpsaltituderaw, fii,
-                     [fii](double altitudeMeters) {
-        fii->updateUavAltitude(static_cast<float>(altitudeMeters));
+    QObject::connect(mav_dec, &Mavlink_Raw_Message::attitudeyaw, item,
+                     [item](float yawRadians) {
+        QMetaObject::invokeMethod(item, "updateFlightHeading",
+                                  Qt::DirectConnection,
+                                  Q_ARG(QVariant, QVariant(yawRadians)));
     });
-    // QObject::connect(mav_dec,SIGNAL(attitude(float)),fii,SLOT(updateUavHeading(float)));
+    QObject::connect(mav_dec, &Mavlink_Raw_Message::attitudepitch, item,
+                     [item](float pitchRadians) {
+        QMetaObject::invokeMethod(item, "updateFlightPitch",
+                                  Qt::DirectConnection,
+                                  Q_ARG(QVariant, QVariant(pitchRadians)));
+    });
+    QObject::connect(mav_dec, &Mavlink_Raw_Message::attituderoll, item,
+                     [item](float rollRadians) {
+        QMetaObject::invokeMethod(item, "updateFlightRoll",
+                                  Qt::DirectConnection,
+                                  Q_ARG(QVariant, QVariant(rollRadians)));
+    });
+    QObject::connect(mav_dec, &Mavlink_Raw_Message::gpsaltituderaw, item,
+                     [item](double altitudeMeters) {
+        QMetaObject::invokeMethod(item, "updateFlightAltitude",
+                                  Qt::DirectConnection,
+                                  Q_ARG(QVariant, QVariant(altitudeMeters)));
+    });
     QObject::connect(mav_dec,SIGNAL(angleCoordinate(QVariant)),item,SLOT(angleRefresh(QVariant)));
     //--------Mavlink__Commands----------//
 
@@ -219,10 +226,6 @@ int main(int argc, char *argv[])
     //---------GIMBAL_PROCESSING_____________//
     QObject::connect(instance,SIGNAL(PovSend(QByteArray)),udp,SLOT(WriteGimbal(QByteArray)));
     QObject::connect(mav_dec,SIGNAL( qmlBatteryInfoSignal(QVariant,QVariant,QVariant)),item,SLOT(getBatteryData(QVariant,QVariant,QVariant)),Qt::DirectConnection);
-
-
-
-    fii->startUpdateFlightInstruments(41);
     dji.startUpdateFlightInstruments(41);
 
     const QString cachePath = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation);

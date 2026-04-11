@@ -10,5 +10,6 @@
         <file alias="PlotView.qml">../qml/components/PlotView.qml</file>
         <file alias="PlotMain.qml">../qml/screens/PlotMain.qml</file>
         <file alias="NetworkBanner.qml">../qml/components/NetworkBanner.qml</file>
+        <file alias="FlightHud.qml">../qml/components/FlightHud.qml</file>
     </qresource>
 </RCC>
