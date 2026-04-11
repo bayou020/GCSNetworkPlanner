@@ -2,6 +2,7 @@
 #include "QtMath"
 #include "qtsdljoystick.h"
 #include <QDateTime>
+#include <QVariant>
 
 
 
@@ -64,7 +65,7 @@ void Mavlink_Raw_Message::send_ping()
     mavlink_ping_t ping;
 
     ping.target_component=1;
-    ping.target_system=1;
+    ping.target_system=targetSystemId;
     ping.seq=pingsequence++;
     mavlink_msg_ping_encode(1,0,&pingmessage,&ping);
     dds_mavlink_encode(pingmessage);
@@ -92,7 +93,7 @@ void Mavlink_Raw_Message::set_message_interval(float message, float interval)
 
     mavlink_message_t message_2d;
     mavlink_command_long_t change_rate_command;
-    change_rate_command.target_system =1;
+    change_rate_command.target_system = targetSystemId;
     change_rate_command.target_component = 1;
     change_rate_command.command          = MAV_CMD_SET_MESSAGE_INTERVAL;
     change_rate_command.confirmation     =  0;
@@ -188,7 +189,7 @@ void Mavlink_Raw_Message::set_stabilized_mode()
 {
     mavlink_message_t message_2d;
     mavlink_command_long_t change_rate_command;
-    change_rate_command.target_system = 1;
+    change_rate_command.target_system = targetSystemId;
     change_rate_command.target_component = 1;
     change_rate_command.command          = MAV_CMD_DO_SET_MODE;
     change_rate_command.confirmation     =  0;
@@ -260,6 +261,18 @@ QStringList Mavlink_Raw_Message::deviceNames() const
     names <<"none" <<"roll" << "Pitch" << "Yaw" << "Thorttle";
 
     return names;
+}
+
+void Mavlink_Raw_Message::setTargetSystemId(int systemId)
+{
+    const int boundedSystemId = qBound(1, systemId, 250);
+    if (targetSystemId == boundedSystemId)
+    {
+        return;
+    }
+
+    targetSystemId = boundedSystemId;
+    syncSelectedVehicleSignals();
 }
 
 
@@ -361,7 +374,7 @@ void Mavlink_Raw_Message::clearWP()
     mavlink_message_t message;
     mavlink_mission_clear_all_t clear;
     clear.target_component=MAV_COMP_ID_MISSIONPLANNER;
-    clear.target_system=1;
+    clear.target_system = targetSystemId;
 #ifdef MAV_MISSION_TYPE_MISSION
     clear.mission_type=MAV_MISSION_TYPE_MISSION;
 #endif
@@ -373,7 +386,7 @@ void Mavlink_Raw_Message::countWP(int count)
     mavlink_message_t message;
     mavlink_mission_count_t count_msg;
     count_msg.target_component=MAV_COMP_ID_MISSIONPLANNER;
-    count_msg.target_system=1;
+    count_msg.target_system = targetSystemId;
 #ifdef MAV_MISSION_TYPE_MISSION
     count_msg.mission_type=MAV_MISSION_TYPE_MISSION;
 #endif
@@ -394,7 +407,7 @@ void Mavlink_Raw_Message::arm()
     mavlink_message_t message_2d;
     mavlink_command_long_t arm_command_msg;
     arm_command_msg.command = MAV_CMD_COMPONENT_ARM_DISARM;
-    arm_command_msg.target_system = 1;
+    arm_command_msg.target_system = targetSystemId;
     arm_command_msg.target_component = 1;
     arm_command_msg.confirmation = 0;
     arm_command_msg.param1 = 1;
@@ -415,7 +428,7 @@ void Mavlink_Raw_Message::disarm()
 
     mavlink_command_long_t arm_command_msg;
     arm_command_msg.command = MAV_CMD_COMPONENT_ARM_DISARM;
-    arm_command_msg.target_system = 1;
+    arm_command_msg.target_system = targetSystemId;
     arm_command_msg.target_component = 1;
     arm_command_msg.confirmation = 0;
     arm_command_msg.param1 = 0;
@@ -429,7 +442,7 @@ void Mavlink_Raw_Message::takeoff()
 
     mavlink_command_long_t arm_command_msg;
     arm_command_msg.command = MAV_CMD_NAV_TAKEOFF;
-    arm_command_msg.target_system = 1;
+    arm_command_msg.target_system = targetSystemId;
     arm_command_msg.target_component = 1;
     arm_command_msg.param1 = 0;
     arm_command_msg.param4 = 2;
@@ -445,7 +458,7 @@ void Mavlink_Raw_Message::returntolaunch()
 
     mavlink_command_long_t arm_command_msg;
     arm_command_msg.command = MAV_CMD_NAV_RETURN_TO_LAUNCH;
-    arm_command_msg.target_system = 1;
+    arm_command_msg.target_system = targetSystemId;
     arm_command_msg.target_component = 1;
     arm_command_msg.confirmation = 0;
     mavlink_msg_command_long_encode(1, 0, &message_2d, &arm_command_msg);
@@ -472,7 +485,7 @@ void Mavlink_Raw_Message::setMode(int baseMode, int customMode)
 
     mavlink_message_t message_2d;
     mavlink_set_mode_t set;
-    set.target_system=1;
+    set.target_system = targetSystemId;
     set.base_mode=baseMode;
     set.custom_mode=customMode;
     mavlink_msg_set_mode_encode(1,0,&message_2d,&set);
@@ -489,7 +502,7 @@ void Mavlink_Raw_Message::setIndexMode(int index)
 {
     mavlink_message_t message_2d;
     mavlink_set_mode_t set;
-    set.target_system=1;
+    set.target_system = targetSystemId;
     switch (index)
     {
     //    baseMode=81;
@@ -637,7 +650,7 @@ void Mavlink_Raw_Message::mavlink_joystick()
     manual.x=_pitch;
     manual.y=_roll;
     manual.z=-_throttle;
-    manual.target= 1; // Send command to MAV 001
+    manual.target = targetSystemId;
     mavlink_msg_manual_control_encode(1, 0, &message_2d, &manual);
     dds_mavlink_encode(message_2d);
     mavlink_msg_manual_control_decode(&message_2d, &manual);
@@ -662,7 +675,7 @@ void Mavlink_Raw_Message::ch3_high()
     rc_override.chan6_raw=1100;
     rc_override.chan7_raw=1100;
     rc_override.chan8_raw=1100;
-    rc_override.target_system = 1; // Send command to MAV 001
+    rc_override.target_system = targetSystemId;
     rc_override.target_component = 1;//PX_COMP_ID_ALL;
     mavlink_msg_rc_channels_override_encode(1, 0, &message_2d, &rc_override);
 
@@ -684,7 +697,7 @@ void Mavlink_Raw_Message::ch3_low()
     rc_override.chan6_raw=900;
     rc_override.chan7_raw=900;
     rc_override.chan8_raw=900;
-    rc_override.target_system = 1; // Send command to MAV 001
+    rc_override.target_system = targetSystemId;
     rc_override.target_component = 1;//PX_COMP_ID_ALL;
     mavlink_msg_rc_channels_override_encode(1, 0, &message_2d, &rc_override);
     dds_mavlink_encode(message_2d);
@@ -708,44 +721,28 @@ void Mavlink_Raw_Message::heartbeat_values(mavlink_message_t message_2d)
 {
     mavlink_heartbeat_t heartbeat;
     mavlink_msg_heartbeat_decode(&message_2d, &heartbeat);
-    // qDebug() << heartbeat.system_status;
-    switch (heartbeat.type)
+    setVehicleStateValue(message_2d.sysid, "vehicleType", vehicleTypeString(heartbeat.type));
+    setVehicleStateValue(message_2d.sysid, "systemStatus", systemStatusString(heartbeat.system_status));
+    setVehicleStateValue(message_2d.sysid, "systemId", message_2d.sysid);
 
+    if (message_2d.sysid == targetSystemId)
     {
-    case 0:     emit uav_type("GENERIC");           break;
-    case 1:     emit uav_type("FIXED WING");        break;
-    case 2:     emit uav_type("QUADROTOR");         break;
-    case 3:     emit uav_type("COAXIAL");           break;
-    case 4:     emit uav_type("HELICOPTER");        break;
-    case 5:     emit uav_type("ANTENNA_TRACKER");   break;
-    case 6:     emit uav_type("GCS");               break;
-    default:    emit uav_type("unknown");           break;
-    }
-    switch (heartbeat.system_status)
-    {
-    case 0:     emit sys_status("UNINITIALIZED");   break;
-    case 1:     emit sys_status("BOOTING");         break;
-    case 2:     emit sys_status("CALIBRATING");     break;
-    case 3:     emit sys_status("STANDBY");         break;
-    case 4:     emit sys_status("ACTIVE");          break;
-    case 5:     emit sys_status("CRITICAL");        break;
-    case 6:     emit sys_status("EMERGENCY");       break;
-    default:    emit sys_status("POWEROFF");        break;
+        syncSelectedVehicleSignals();
     }
 }
 void Mavlink_Raw_Message::sys_values(mavlink_message_t message_2d)
 {
     mavlink_sys_status_t sys_status;
     mavlink_msg_sys_status_decode(&message_2d, &sys_status);
-    //GUI_Signals
-    //   emit guibatterypercentage(QString::setNum(sys_status.battery_remaining));
-    //RAW_Signals
-    emit battery_voltage(sys_status.voltage_battery/10.0e3);
-    emit batterypercentage(sys_status.battery_remaining);
-    emit battery_current(sys_status.current_battery*10.0);
-    emit sys_packets_dropped_rate(sys_status.drop_rate_comm);
-    //QML Signals
-    emit qmlBatteryInfoSignal(QVariant(sys_status.voltage_battery/10.0e3),QVariant(sys_status.battery_remaining),QVariant(sys_status.current_battery*10.0));
+    setVehicleStateValue(message_2d.sysid, "batteryVoltage", sys_status.voltage_battery / 1.0e3);
+    setVehicleStateValue(message_2d.sysid, "batteryPercentage", sys_status.battery_remaining);
+    setVehicleStateValue(message_2d.sysid, "batteryCurrentMilliAmps", sys_status.current_battery * 10.0);
+    setVehicleStateValue(message_2d.sysid, "dropRateComm", sys_status.drop_rate_comm);
+
+    if (message_2d.sysid == targetSystemId)
+    {
+        syncSelectedVehicleSignals();
+    }
 
 }
 
@@ -758,11 +755,19 @@ void Mavlink_Raw_Message::gps_int_values(mavlink_message_t message_2d)
     //GUI_signals
     emit guigpslatitudeint(raw_msg.setNum(packet.lat/10.0e6,'g',12));
     emit guigpslongtitudeint(raw_msg.setNum(packet.lon/10.0e6,'g',12));
-    emit guigpsaltitudeint(raw_msg.setNum(packet.alt/10.0e3,'g',6));
+    emit guigpsaltitudeint(raw_msg.setNum(packet.alt / 1.0e3,'g',6));
     //RAW_signals
-    emit gpslatitudeint(packet.lat/10.0e6);
-    emit gpslongtitudeint(packet.lon/10.0e6);
-    emit gpslatitudeint(packet.alt/10.0e3);
+    setVehicleStateValue(message_2d.sysid, "latitude", packet.lat / 10.0e6);
+    setVehicleStateValue(message_2d.sysid, "longitude", packet.lon / 10.0e6);
+    setVehicleStateValue(message_2d.sysid, "altitudeMeters", packet.alt / 1.0e3);
+    setVehicleStateValue(message_2d.sysid, "systemId", message_2d.sysid);
+
+    if (message_2d.sysid == targetSystemId)
+    {
+        emit gpslatitudeint(packet.lat/10.0e6);
+        emit gpslongtitudeint(packet.lon/10.0e6);
+        emit gpsaltitudeint(packet.alt / 1.0e3);
+    }
 }
 
 void Mavlink_Raw_Message::gps_raw_values(mavlink_message_t message_2d)
@@ -775,16 +780,22 @@ void Mavlink_Raw_Message::gps_raw_values(mavlink_message_t message_2d)
     //GUI_signals
     emit guigpslatituderaw(raw_msg.setNum(packet.lat/10.0e6,'g',12));
     emit guigpslongtituderaw(raw_msg.setNum(packet.lon/10.0e6,'g',12));
-    emit guigpsaltituderaw(raw_msg.setNum(packet.alt/10.0e3,'g',6));
+    emit guigpsaltituderaw(raw_msg.setNum(packet.alt / 1.0e3,'g',6));
 
-    //RAW_signals
-    emit gpslatituderaw(packet.lat/10.0e6);
-    emit gpslongtituderaw(packet.lon/10.0e6);
-    emit gpslatituderaw(packet.alt/10.0e3);
-    //QVariant
-    latitude = QVariant((packet.lat/10.0e6));
-    longitude = QVariant((packet.lon/10.0e6));
-    emit signalCoordinate(latitude,longitude);
+    setVehicleStateValue(message_2d.sysid, "latitude", packet.lat / 10.0e6);
+    setVehicleStateValue(message_2d.sysid, "longitude", packet.lon / 10.0e6);
+    setVehicleStateValue(message_2d.sysid, "altitudeMeters", packet.alt / 1.0e3);
+    setVehicleStateValue(message_2d.sysid, "gpsFixType", packet.fix_type);
+
+    if (message_2d.sysid == targetSystemId)
+    {
+        emit gpslatituderaw(packet.lat/10.0e6);
+        emit gpslongtituderaw(packet.lon/10.0e6);
+        emit gpsaltituderaw(packet.alt / 1.0e3);
+        latitude = QVariant((packet.lat/10.0e6));
+        longitude = QVariant((packet.lon/10.0e6));
+        emit signalCoordinate(latitude,longitude);
+    }
     // qDebug()<<latitude << "   lat 2";
 
 
@@ -861,6 +872,86 @@ void Mavlink_Raw_Message::attitude_values(mavlink_message_t message_2d)
     //            emit gpsaltituderaw(gps_alt_raw);
 
 
+}
+
+QString Mavlink_Raw_Message::vehicleTypeString(uint8_t type) const
+{
+    switch (type)
+    {
+    case 0:     return "GENERIC";
+    case 1:     return "FIXED WING";
+    case 2:     return "QUADROTOR";
+    case 3:     return "COAXIAL";
+    case 4:     return "HELICOPTER";
+    case 5:     return "ANTENNA_TRACKER";
+    case 6:     return "GCS";
+    default:    return "unknown";
+    }
+}
+
+QString Mavlink_Raw_Message::systemStatusString(uint8_t statusValue) const
+{
+    switch (statusValue)
+    {
+    case 0:     return "UNINITIALIZED";
+    case 1:     return "BOOTING";
+    case 2:     return "CALIBRATING";
+    case 3:     return "STANDBY";
+    case 4:     return "ACTIVE";
+    case 5:     return "CRITICAL";
+    case 6:     return "EMERGENCY";
+    default:    return "POWEROFF";
+    }
+}
+
+QVariantMap Mavlink_Raw_Message::vehicleStateForSystem(int systemId) const
+{
+    return vehicleStates.value(systemId);
+}
+
+void Mavlink_Raw_Message::setVehicleStateValue(int systemId, const QString &key, const QVariant &value)
+{
+    QVariantMap state = vehicleStates.value(systemId);
+    state.insert(key, value);
+    vehicleStates.insert(systemId, state);
+}
+
+void Mavlink_Raw_Message::syncSelectedVehicleSignals()
+{
+    const QVariantMap state = vehicleStateForSystem(targetSystemId);
+
+    emit uav_type(state.value("vehicleType", "--").toString());
+    emit sys_status(state.value("systemStatus", "--").toString());
+
+    const QVariant batteryVoltageValue = state.value("batteryVoltage");
+    const QVariant batteryPercentageValue = state.value("batteryPercentage");
+    const QVariant batteryCurrentValue = state.value("batteryCurrentMilliAmps");
+
+    const double selectedBatteryVoltage = batteryVoltageValue.isValid() ? batteryVoltageValue.toDouble() : -1.0;
+    const int selectedBatteryPercentage = batteryPercentageValue.isValid() ? batteryPercentageValue.toInt() : -1;
+    const double selectedBatteryCurrent = batteryCurrentValue.isValid() ? batteryCurrentValue.toDouble() : -1.0;
+
+    emit battery_voltage(selectedBatteryVoltage);
+    emit batterypercentage(selectedBatteryPercentage);
+    emit battery_current(selectedBatteryCurrent);
+    emit qmlBatteryInfoSignal(QVariant(selectedBatteryVoltage),
+                              QVariant(selectedBatteryPercentage),
+                              QVariant(selectedBatteryCurrent));
+
+    const QVariant latitudeValue = state.value("latitude");
+    const QVariant longitudeValue = state.value("longitude");
+    if (latitudeValue.isValid() && longitudeValue.isValid())
+    {
+        latitude = latitudeValue;
+        longitude = longitudeValue;
+        emit signalCoordinate(latitude, longitude);
+    }
+    else
+    {
+        latitude = 0;
+        longitude = 0;
+        emit signalCoordinate(latitude, longitude);
+    }
 }
 
 void Mavlink_Raw_Message::altitude_values(mavlink_message_t message_2d)

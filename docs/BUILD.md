@@ -97,3 +97,39 @@ The basic verification pass is:
 3. launch with `./scripts/run.sh`
 4. confirm the QML UI loads and the MapLibre plugin is available
 
+## ns-3 Cellular Research Workspace
+
+The repository also contains an external `ns-3` experiment workspace under:
+
+```text
+sim/ns3/
+```
+
+This is intentionally separate from the Qt application build. It uses the local archive:
+
+```text
+~/Downloads/ns-allinone-3.47.tar.bz2
+```
+
+Quick start:
+
+```bash
+./sim/ns3/scripts/run_uav_lte.sh
+./sim/ns3/scripts/run_uav_nr.sh
+```
+
+Those scripts extract the archive into `.deps/`, stage the repo scenarios into the ns-3 `scratch/` tree, build a focused ns-3 dependency set, and run the experiment.
+
+For live QML visualization against the desktop GCS:
+
+```bash
+./scripts/run.sh
+./sim/ns3/scripts/run_live_uav_lte.sh
+```
+
+or:
+
+```bash
+./scripts/run.sh
+./sim/ns3/scripts/run_live_uav_nr.sh
+```

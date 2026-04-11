@@ -2,8 +2,10 @@
 #define UDPGCS_H
 
 #include <QObject>
+#include <QHostAddress>
 #include <QUdpSocket>
 #include <QDateTime>
+#include <QString>
 
 class udpgcs : public QObject
 {
@@ -11,9 +13,16 @@ class udpgcs : public QObject
 public:
     explicit udpgcs(QObject *parent = nullptr);
     ~udpgcs();
-    
-    
-    
+
+    struct ChannelConfig
+    {
+        QString name;
+        QHostAddress bindAddress;
+        quint16 bindPort = 0;
+        QHostAddress remoteAddress;
+        quint16 remotePort = 0;
+    };
+
 signals:
     void onModemChanged(QByteArray);
     void onPilotChanged(QByteArray);
@@ -30,8 +39,14 @@ public slots:
 
     
 private:
+    void configureChannels();
+    bool bindSocket(QUdpSocket *socket, const ChannelConfig &channel);
+
     QUdpSocket *socketModem;
     QUdpSocket *socketPilot, *socketGimbal;
+    ChannelConfig m_modemChannel;
+    ChannelConfig m_pilotChannel;
+    ChannelConfig m_gimbalChannel;
     QDateTime * time;
     qint64 msec2;
     qint64 msec;

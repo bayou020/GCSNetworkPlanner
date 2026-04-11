@@ -29,9 +29,13 @@ Item
     property double joystickaxis :0
     property double joystickoption:0
     property double anglec: 0
-    property double batteryPercentage
-    property double batteryVoltage
-    property double batteryCourrant
+    property real batteryPercentage: -1
+    property real batteryVoltage: -1
+    property real batteryCourrant: -1
+    property string mavlinkVehicleType: "--"
+    property string mavlinkSystemStatus: "--"
+    property var mavlinkLatitude: null
+    property var mavlinkLongitude: null
 
     signal cellrows(var rows)
     signal sendCellsCoordinates(var latitude, var longitude)
@@ -94,11 +98,157 @@ Item
         uavMap1.clearAntennas.connect(item1.antennasCl)
         timer.start()
         item1.windowNetwork.visible = true
+        item1.refreshVehicleInfoModel()
 
 
 
         //  item1.meteoSize.connect(uavMap1.weatherParams)
 
+    }
+
+    function updateSimulationNetworkBanner()
+    {
+        if (typeof simulationFeed === "undefined"
+                || simulationFeed === null
+                || item1.windowNetwork === null
+                || item1.windowNetwork === undefined) {
+            return
+        }
+
+        if (!simulationFeed.hasSelectedUav && simulationFeed.uavs.length > 0) {
+            simulationFeed.selectUavById(simulationFeed.uavs[0].id)
+        }
+
+        if (simulationFeed.hasSelectedUav) {
+            item1.windowNetwork.showSimulationParameters(item1.mergedSelectedVehicleData())
+            item1.windowNetwork.visible = true
+            return
+        }
+
+        if (item1.hasMavlinkVehicleData()) {
+            item1.windowNetwork.showMavlinkParameters(item1.currentMavlinkVehicleData())
+            item1.windowNetwork.visible = true
+            return
+        }
+
+        item1.windowNetwork.clearSimulationParameters()
+    }
+
+    function formatVehicleMetric(value, decimals, unit)
+    {
+        if (value === undefined || value === null || value === "" || isNaN(Number(value))) {
+            return "--"
+        }
+
+        const numericValue = Number(value)
+        if (numericValue < 0) {
+            return "--"
+        }
+
+        const precision = decimals === undefined ? 1 : decimals
+        return numericValue.toFixed(precision) + (unit ? " " + unit : "")
+    }
+
+    function refreshVehicleInfoModel()
+    {
+        batteryInfoList.clear()
+        batteryInfoList.append({"key": "Type", "value": item1.mavlinkVehicleType || "--"})
+        batteryInfoList.append({"key": "Status", "value": item1.mavlinkSystemStatus || "--"})
+        batteryInfoList.append({"key": "Battery", "value": item1.formatVehicleMetric(item1.batteryPercentage, 0, "%")})
+        batteryInfoList.append({"key": "Voltage", "value": item1.formatVehicleMetric(item1.batteryVoltage, 2, "V")})
+        batteryInfoList.append({"key": "Current", "value": item1.formatVehicleMetric(item1.batteryCourrant, 0, "mA")})
+
+        if (item1.mavlinkLatitude !== null && item1.mavlinkLongitude !== null) {
+            batteryInfoList.append({"key": "Latitude", "value": Number(item1.mavlinkLatitude).toFixed(6)})
+            batteryInfoList.append({"key": "Longitude", "value": Number(item1.mavlinkLongitude).toFixed(6)})
+        } else {
+            batteryInfoList.append({"key": "Latitude", "value": "--"})
+            batteryInfoList.append({"key": "Longitude", "value": "--"})
+        }
+    }
+
+    function hasMavlinkVehicleData()
+    {
+        return item1.mavlinkVehicleType !== "--"
+                || item1.mavlinkSystemStatus !== "--"
+                || item1.batteryPercentage >= 0
+                || item1.mavlinkLatitude !== null
+                || item1.mavlinkLongitude !== null
+    }
+
+    function currentMavlinkVehicleData()
+    {
+        return {
+            "vehicleType": item1.mavlinkVehicleType,
+            "systemStatus": item1.mavlinkSystemStatus,
+            "batteryPercentage": item1.batteryPercentage >= 0 ? item1.batteryPercentage : null,
+            "batteryVoltage": item1.batteryVoltage >= 0 ? item1.batteryVoltage : null,
+            "batteryCurrentMilliAmps": item1.batteryCourrant >= 0 ? item1.batteryCourrant : null,
+            "latitude": item1.mavlinkLatitude,
+            "longitude": item1.mavlinkLongitude
+        }
+    }
+
+    function mergedSelectedVehicleData()
+    {
+        let data = {}
+
+        if (typeof simulationFeed !== "undefined"
+                && simulationFeed !== null
+                && simulationFeed.hasSelectedUav) {
+            data = Object.assign({}, simulationFeed.selectedUav)
+        }
+
+        if (!item1.hasMavlinkVehicleData()) {
+            return data
+        }
+
+        const mavlinkData = item1.currentMavlinkVehicleData()
+        if (mavlinkData.vehicleType && mavlinkData.vehicleType !== "--") {
+            data.vehicleType = mavlinkData.vehicleType
+        }
+        if (mavlinkData.systemStatus && mavlinkData.systemStatus !== "--") {
+            data.systemStatus = mavlinkData.systemStatus
+        }
+        if (mavlinkData.batteryPercentage !== null) {
+            data.batteryPercentage = mavlinkData.batteryPercentage
+        }
+        if (mavlinkData.batteryVoltage !== null) {
+            data.batteryVoltage = mavlinkData.batteryVoltage
+        }
+        if (mavlinkData.batteryCurrentMilliAmps !== null) {
+            data.batteryCurrentMilliAmps = mavlinkData.batteryCurrentMilliAmps
+        }
+        if (mavlinkData.latitude !== null) {
+            data.latitude = mavlinkData.latitude
+        }
+        if (mavlinkData.longitude !== null) {
+            data.longitude = mavlinkData.longitude
+        }
+
+        return data
+    }
+
+    function updateMavlinkVehicleType(vehicleType)
+    {
+        item1.mavlinkVehicleType = vehicleType || "--"
+        item1.refreshVehicleInfoModel()
+        item1.updateSimulationNetworkBanner()
+    }
+
+    function updateMavlinkSystemStatus(systemStatus)
+    {
+        item1.mavlinkSystemStatus = systemStatus || "--"
+        item1.refreshVehicleInfoModel()
+        item1.updateSimulationNetworkBanner()
+    }
+
+    Connections {
+        target: typeof simulationFeed !== "undefined" ? simulationFeed : null
+
+        function onSelectedUavChanged() {
+            item1.updateSimulationNetworkBanner()
+        }
     }
 
 
@@ -197,7 +347,7 @@ Item
     Rectangle {
         id:batteryInfoRect
         width: 200
-        height: 200
+        height: 220
         anchors.top: batteryInfo.bottom
         anchors.left: batteryInfo.left
         radius: 17
@@ -205,11 +355,32 @@ Item
         border.width: 2
         color: "#7CC7FF"
         visible: false
-        Label
-        {
-            Text {
-                id: textbattery
-                text: {text:batteryInfoList.key+ ": " +batteryInfoList.value }
+        ListView {
+            id: batteryInfoListView
+            anchors.fill: parent
+            anchors.margins: 12
+            clip: true
+            spacing: 4
+            model: batteryInfoList
+            delegate: RowLayout {
+                required property string key
+                required property string value
+                width: batteryInfoListView.width
+                spacing: 8
+
+                Text {
+                    text: key + ":"
+                    color: "#0f2b3a"
+                    font.bold: true
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    horizontalAlignment: Text.AlignRight
+                    text: value
+                    color: "#0f2b3a"
+                    elide: Text.ElideRight
+                }
             }
         }
 
@@ -1346,10 +1517,12 @@ Item
     {
         item1.componentNetwork = Qt.createComponent("qrc:/NetworkBanner.qml")
         item1.windowNetwork    = componentNetwork.createObject(item1)
-        item1.windowNetwork.anchors.top=image_flight_instruments.bottom
-        // item1.windowNetwork.anchors.right=image_flight_instruments.left
-        item1.windowNetwork.anchors.left=image_flight_instruments.left
-        item1.windowNetwork.anchors.leftMargin=-80
+        item1.windowNetwork.anchors.right = item1.right
+        item1.windowNetwork.anchors.rightMargin = 16
+        item1.windowNetwork.anchors.top = image_flight_instruments.bottom
+        item1.windowNetwork.anchors.topMargin = 10
+        item1.windowNetwork.anchors.bottom = item1.bottom
+        item1.windowNetwork.anchors.bottomMargin = 16
         item1.windowNetwork.visible = false
         item1.sendNetworkIcons.connect(item1.windowNetwork.getNetworkParameters)
         item1.guiQMLLTEParameters.connect(item1.windowNetwork.getLteParameters)
@@ -1461,6 +1634,15 @@ Item
     }
     function updateUavGPS(xc,yc)
     {
+        if (Number(xc) === 0 && Number(yc) === 0) {
+            item1.mavlinkLatitude = null
+            item1.mavlinkLongitude = null
+        } else {
+            item1.mavlinkLatitude = xc
+            item1.mavlinkLongitude = yc
+        }
+        item1.refreshVehicleInfoModel()
+        item1.updateSimulationNetworkBanner()
         uavMap1.updateUavGPS(xc,yc)
 
         // console.log(xc)
@@ -1548,11 +1730,10 @@ Item
         batteryCourrant=courant
         batteryPercentage=percentage
         console.log("battery 1" +percentage)
-        console.log("battery 2" + voltage/1000)
+        console.log("battery voltage " + voltage)
 
-        batteryInfoList.set(0,{key: "Percentage", value: percentage})
-        batteryInfoList.set(1,{key: "Voltage", value: voltage})
-        batteryInfoList.set(2,{key: "Courant", value: courant})
+        item1.refreshVehicleInfoModel()
+        item1.updateSimulationNetworkBanner()
 
     }
 }

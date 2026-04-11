@@ -17,6 +17,8 @@ This repository began as a PhD-era research project and is now being maintained 
 - Qt 6.11 desktop application with a QML-based flight UI
 - MapLibre Native Qt integration with Mapbox-hosted styles
 - Click-driven OpenWeather markers and optional weather raster overlays
+- Live ns-3 LTE/NR simulation overlays for UAV and antenna visualization in QML
+- Clickable live simulation UAVs with right-panel network metrics for LTE and NR studies
 - MAVLink telemetry decoding and command dispatch
 - DJI Onboard SDK integration retained from the original research codebase
 - SDL2-backed joystick support through QJoysticks
@@ -30,6 +32,7 @@ This repository began as a PhD-era research project and is now being maintained 
 - Vendored dependencies isolated under `third_party/`
 - Legacy Qt 5/widget-era code archived under `legacy/`
 - Setup/configure/build/run scripts under `scripts/`
+- `sim/ns3/` workspace for cellular UAV/GCS network experiments
 - Dedicated docs for build, configuration, architecture, contribution, and troubleshooting
 
 ## Quick Start
@@ -77,6 +80,8 @@ Core variables:
 - `OPENWEATHERMAP_API_KEY`
 - `OPENWEATHERMAP_TILE_LAYER`
 - `QSG_RHI_BACKEND`
+- `NS3_SIM_PORT`
+- `NS3_SIM_RPI_PORT`
 
 Full reference:
 
@@ -100,6 +105,7 @@ Detailed layout notes:
 
 - [docs/PROJECT_LAYOUT.md](/home/boots/work/phd/GCSNetworkPlanner/docs/PROJECT_LAYOUT.md)
 - [docs/ARCHITECTURE.md](/home/boots/work/phd/GCSNetworkPlanner/docs/ARCHITECTURE.md)
+- [sim/ns3/README.md](/home/boots/work/phd/GCSNetworkPlanner/sim/ns3/README.md)
 
 ## Documentation Index
 
@@ -109,6 +115,7 @@ Detailed layout notes:
 - [Configuration](/home/boots/work/phd/GCSNetworkPlanner/docs/CONFIGURATION.md)
 - [Troubleshooting](/home/boots/work/phd/GCSNetworkPlanner/docs/TROUBLESHOOTING.md)
 - [Contributing](/home/boots/work/phd/GCSNetworkPlanner/docs/CONTRIBUTING.md)
+- [ns-3 Simulation Workspace](/home/boots/work/phd/GCSNetworkPlanner/sim/ns3/README.md)
 - [Security Policy](/home/boots/work/phd/GCSNetworkPlanner/SECURITY.md)
 - [Support](/home/boots/work/phd/GCSNetworkPlanner/SUPPORT.md)
 - [Code of Conduct](/home/boots/work/phd/GCSNetworkPlanner/CODE_OF_CONDUCT.md)
@@ -124,6 +131,8 @@ Project screenshots can be published under `docs/images/`.
 - Some control and UI flows are still shaped by the original research prototype architecture.
 - Forced termination currently exposes an existing shutdown cleanup bug (`free(): invalid pointer`) that still needs dedicated debugging.
 - Some QML files still emit legacy lint warnings even though the application runs.
+- Cellular simulation experiments currently cover LTE and NR with the downloaded `ns-allinone-3.47` bundle; GSM/UMTS are not present in that local release.
+- The live ns-3 visualization bridge currently uses projected GPS coordinates and localhost UDP snapshots; it does not yet ingest real `NetworkPlannerRpi` payload semantics.
 
 ## License
 

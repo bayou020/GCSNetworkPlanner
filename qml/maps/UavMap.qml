@@ -22,6 +22,41 @@ Item {
         return mapTypes.length > 0 ? mapTypes[0] : null;
     }
 
+    function antennaColor(rat) {
+        switch ((rat || "").toLowerCase()) {
+        case "nr":
+            return "#7d4cff"
+        case "lte":
+            return "#ff7b38"
+        default:
+            return "#4f91c9"
+        }
+    }
+
+    function maybeCenterOnSimulation() {
+        if (simulationCentered
+                || typeof simulationFeed === "undefined"
+                || simulationFeed === null
+                || !simulationFeed.hasData) {
+            return
+        }
+
+        if (simulationFeed.uavs.length > 0) {
+            const firstUav = simulationFeed.uavs[0]
+            map.center = QtPositioning.coordinate(firstUav.latitude, firstUav.longitude)
+            map.zoomLevel = Math.max(map.zoomLevel, 12)
+            simulationCentered = true
+            return
+        }
+
+        if (simulationFeed.antennas.length > 0) {
+            const firstAntenna = simulationFeed.antennas[0]
+            map.center = QtPositioning.coordinate(firstAntenna.latitude, firstAntenna.longitude)
+            map.zoomLevel = Math.max(map.zoomLevel, 11)
+            simulationCentered = true
+        }
+    }
+
     function mapCoordinateFromPoint(point) {
         return map.toCoordinate(Qt.point(point.x, point.y), false);
     }
@@ -173,6 +208,7 @@ Item {
     property real bottomrightRLon:0
     property var weatherOverlaySourceParam: null
     property var weatherOverlayLayerParam: null
+    property bool simulationCentered: false
 
 
     anchors.fill: parent
@@ -198,6 +234,24 @@ Item {
         function onErrorChanged() {
             if (weatherService.errorString !== "") {
                 console.warn("weather error:", weatherService.errorString)
+            }
+        }
+    }
+
+    Connections {
+        target: typeof simulationFeed !== "undefined" ? simulationFeed : null
+
+        function onUavsChanged() {
+            root.maybeCenterOnSimulation()
+        }
+
+        function onAntennasChanged() {
+            root.maybeCenterOnSimulation()
+        }
+
+        function onErrorChanged() {
+            if (simulationFeed.errorString !== "") {
+                console.warn("ns-3 simulation error:", simulationFeed.errorString)
             }
         }
     }
@@ -356,8 +410,198 @@ Item {
             }
         }
 
+        MapItemView {
+            id: simulationAntennaCoverage
+            model: typeof simulationFeed !== "undefined" && simulationFeed !== null
+                   ? simulationFeed.antennaModel : null
+
+            delegate: MapCircle {
+                required property var modelData
+                color: Qt.alpha(root.antennaColor(modelData.rat), 0.18)
+                border.color: root.antennaColor(modelData.rat)
+                border.width: 3
+                opacity: 1.0
+                center: QtPositioning.coordinate(modelData.latitude, modelData.longitude)
+                radius: modelData.rangeMeters
+                visible: modelData.rangeMeters > 0
+            }
+        }
+
+        MapItemView {
+            id: simulationAntennaMarkers
+            model: typeof simulationFeed !== "undefined" && simulationFeed !== null
+                   ? simulationFeed.antennaModel : null
+
+            delegate: MapQuickItem {
+                required property var modelData
+                coordinate: QtPositioning.coordinate(modelData.latitude, modelData.longitude)
+                anchorPoint.x: 20
+                anchorPoint.y: 20
+                z: 15
+
+                sourceItem: Item {
+                    width: 76
+                    height: 76
+
+                    Rectangle {
+                        anchors.centerIn: parent
+                        width: 28
+                        height: 28
+                        radius: 14
+                        color: root.antennaColor(modelData.rat)
+                        border.color: "white"
+                        border.width: 2
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "A"
+                            color: "white"
+                            font.bold: true
+                            font.pixelSize: 13
+                        }
+                    }
+
+                    Rectangle {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.top: parent.top
+                        color: "#dd13202b"
+                        radius: 8
+                        height: 20
+                        width: Math.max(42, antennaLabel.implicitWidth + 14)
+
+                        Text {
+                            id: antennaLabel
+                            anchors.centerIn: parent
+                            color: "white"
+                            font.pixelSize: 11
+                            font.bold: true
+                            text: modelData.label
+                        }
+                    }
+                }
+            }
+        }
+
+        MapItemView {
+            id: simulationUavMarkers
+            model: typeof simulationFeed !== "undefined" && simulationFeed !== null
+                   ? simulationFeed.uavModel : null
+
+            delegate: MapQuickItem {
+                required property var modelData
+                property bool selected: typeof simulationFeed !== "undefined"
+                                        && simulationFeed !== null
+                                        && simulationFeed.selectedUavId === modelData.id
+                property real latitude: modelData.latitude !== undefined
+                                        ? Number(modelData.latitude) : 0
+                property real longitude: modelData.longitude !== undefined
+                                         ? Number(modelData.longitude) : 0
+                property real headingDegrees: modelData.headingDegrees !== undefined
+                                              ? Number(modelData.headingDegrees) : 0
+                autoFadeIn: false
+                coordinate: QtPositioning.coordinate(latitude, longitude)
+                anchorPoint.x: uavMarkerBody.width * 0.5
+                anchorPoint.y: 46
+                zoomLevel: map.zoomLevel
+                z: selected ? 40 : 25
+
+                Behavior on latitude {
+                    NumberAnimation {
+                        duration: 420
+                        easing.type: Easing.InOutQuad
+                    }
+                }
+
+                Behavior on longitude {
+                    NumberAnimation {
+                        duration: 420
+                        easing.type: Easing.InOutQuad
+                    }
+                }
+
+                Behavior on headingDegrees {
+                    NumberAnimation {
+                        duration: 260
+                        easing.type: Easing.OutCubic
+                    }
+                }
+
+                sourceItem: Item {
+                    id: uavMarkerBody
+                    width: 92
+                    height: 72
+
+                    Rectangle {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.bottom: parent.bottom
+                        width: 44
+                        height: 44
+                        radius: 22
+                        color: selected ? "#55ffd54f" : "transparent"
+                        border.color: selected ? "#ffd54f" : "transparent"
+                        border.width: selected ? 2 : 0
+                    }
+
+                    Image {
+                        id: liveUavImage
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.bottom: parent.bottom
+                        sourceSize.width: 40
+                        sourceSize.height: 40
+                        width: 40
+                        height: 40
+                        fillMode: Image.PreserveAspectFit
+                        smooth: true
+                        mipmap: true
+                        source: "qrc:/ico/drone_i.ico"
+                        transform: Rotation {
+                            origin.x: liveUavImage.width / 2
+                            origin.y: liveUavImage.height / 2
+                            angle: headingDegrees
+                        }
+                    }
+
+                    Rectangle {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.top: parent.top
+                        color: "#dd174762"
+                        radius: 8
+                        height: 20
+                        width: Math.max(42, uavLabel.implicitWidth + 14)
+
+                        Text {
+                            id: uavLabel
+                            anchors.centerIn: parent
+                            color: "white"
+                            font.pixelSize: 11
+                            font.bold: true
+                            text: modelData.label
+                        }
+                    }
+
+                    Rectangle {
+                        anchors.fill: parent
+                        color: "transparent"
+
+                        TapHandler {
+                            acceptedButtons: Qt.LeftButton
+                            gesturePolicy: TapHandler.ReleaseWithinBounds
+                            onTapped: function() {
+                                if (typeof simulationFeed !== "undefined" && simulationFeed !== null) {
+                                    simulationFeed.selectUavById(modelData.id)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         MapQuickItem {
             id: main_quadcopter
+            visible: typeof simulationFeed === "undefined"
+                     || simulationFeed === null
+                     || !simulationFeed.hasData
             coordinate: QtPositioning.coordinate(root.valueLatitude, root.valueLongitude)
             anchorPoint.x: main_quadcopter.width * 0.5
             anchorPoint.y: main_quadcopter.height * 0.5
@@ -587,6 +831,49 @@ Item {
                 color: "white"
                 font.pixelSize: 13
                 text: weatherService.errorString
+            }
+        }
+
+        Rectangle {
+            visible: typeof simulationFeed !== "undefined"
+                     && simulationFeed !== null
+                     && simulationFeed.hasData
+            anchors.left: parent.left
+            anchors.bottom: parent.bottom
+            anchors.leftMargin: 12
+            anchors.bottomMargin: 12
+            z: 220
+            radius: 10
+            color: "#cc13202b"
+            border.width: 1
+            border.color: "#508bb7"
+            width: Math.max(180, simulationStatusColumn.implicitWidth + 20)
+            height: simulationStatusColumn.implicitHeight + 16
+
+            Column {
+                id: simulationStatusColumn
+                anchors.centerIn: parent
+                spacing: 2
+
+                Text {
+                    color: "white"
+                    font.bold: true
+                    font.pixelSize: 13
+                    text: "ns-3 " + simulationFeed.rat.toUpperCase() + " live"
+                }
+
+                Text {
+                    color: "#d2e8f7"
+                    font.pixelSize: 12
+                    text: "t = " + simulationFeed.simTime.toFixed(1) + " s"
+                }
+
+                Text {
+                    color: "#d2e8f7"
+                    font.pixelSize: 12
+                    text: simulationFeed.antennas.length + " antennas, "
+                          + simulationFeed.uavs.length + " UAVs"
+                }
             }
         }
     }

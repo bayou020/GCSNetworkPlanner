@@ -58,6 +58,7 @@ set(PROJECT_SOURCES
     src/app/main.cpp
     src/core/file_writer.cpp
     src/core/logging.cpp
+    src/core/ns3_simulation_feed.cpp
     src/dji/djigcs.cpp
     src/dji/QonboardSDK.cpp
     src/mavlink/mav_gcs_manager.cpp

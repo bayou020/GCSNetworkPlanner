@@ -7,6 +7,8 @@
 #include <QQuickView>
 #include <QtQuick>
 #include "QJoysticks.h"
+#include <QHash>
+#include <QVariantMap>
 
 
 
@@ -146,6 +148,7 @@ public slots:
     void    get_axis_qml(double currentAxis,double currentParameter);
     void    get_axis_value_qml(double currentAxis,double currentValue);
    void    get_axis_combobx(QVariant combobox);
+    void    setTargetSystemId(int systemId);
     void    countWP(int count);
     void    clearWP();
     void    get_QML_test(QVariant latitude);
@@ -165,6 +168,12 @@ public slots:
 
 
 private:
+    QString vehicleTypeString(uint8_t type) const;
+    QString systemStatusString(uint8_t status) const;
+    QVariantMap vehicleStateForSystem(int systemId) const;
+    void setVehicleStateValue(int systemId, const QString &key, const QVariant &value);
+    void syncSelectedVehicleSignals();
+
     mavlink_status_t lastStatus;
     uint8_t cp;
     mavlink_message_t message,message2,pingmessage;
@@ -185,6 +194,8 @@ private:
     QVariant mission_result,declinedIndex;
     int modeIndex;
 float yaw,roll,pitch;
+    int targetSystemId = 1;
+    QHash<int, QVariantMap> vehicleStates;
 };
 
 #endif // MAVLINK_RAW_MESSAGE_H

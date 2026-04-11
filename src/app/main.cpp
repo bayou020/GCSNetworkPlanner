@@ -29,6 +29,7 @@
 #include "logging.h"
 #include "mavlink/mav_gcs_manager.h"
 #include "weather_service.h"
+#include "ns3_simulation_feed.h"
 
 int main(int argc, char *argv[])
 {
@@ -57,6 +58,7 @@ int main(int argc, char *argv[])
     logging * log = new logging();
     QGimball *gimbal=new QGimball;
     WeatherService *weatherService = new WeatherService(&a);
+    Ns3SimulationFeed *simulationFeed = new Ns3SimulationFeed(&a);
 
 
     // loading QML view
@@ -78,6 +80,7 @@ int main(int argc, char *argv[])
     QJoysticks* instance = QJoysticks::getInstance();
     const QString mapboxAccessToken = qEnvironmentVariable("MAPBOX_ACCESS_TOKEN");
     const QString mapboxStyleUrl = qEnvironmentVariable("MAPBOX_STYLE_URL");
+    simulationFeed->startListening();
 
     /* Enable the virtual joystick */
     instance->setVirtualJoystickRange (1);
@@ -89,6 +92,7 @@ int main(int argc, char *argv[])
     engine->rootContext()->setContextProperty("QJoysticks", instance);
     engine->rootContext()->setContextProperty("mavJoy", mav_dec);
     engine->rootContext()->setContextProperty("weatherService", weatherService);
+    engine->rootContext()->setContextProperty("simulationFeed", simulationFeed);
     engine->rootContext()->setContextProperty("mapboxAccessToken", mapboxAccessToken);
     engine->rootContext()->setContextProperty("mapboxStyleUrl", mapboxStyleUrl);
     engine->addImageProvider("FlightInstrumentsImageProvider", fii);
@@ -144,6 +148,10 @@ int main(int argc, char *argv[])
     QObject::connect(mav_dec,SIGNAL(attitudeyaw(float)),fii,SLOT(updateUavHeading(float)));
     QObject::connect(mav_dec,SIGNAL(attitudepitch(float)),fii,SLOT(updateUavPitch(float)));
     QObject::connect(mav_dec,SIGNAL(attituderoll(float)),fii,SLOT(updateUavRoll(float)));
+    QObject::connect(mav_dec, &Mavlink_Raw_Message::gpsaltituderaw, fii,
+                     [fii](double altitudeMeters) {
+        fii->updateUavAltitude(static_cast<float>(altitudeMeters));
+    });
     // QObject::connect(mav_dec,SIGNAL(attitude(float)),fii,SLOT(updateUavHeading(float)));
     QObject::connect(mav_dec,SIGNAL(angleCoordinate(QVariant)),item,SLOT(angleRefresh(QVariant)));
     //--------Mavlink__Commands----------//
@@ -164,6 +172,23 @@ int main(int argc, char *argv[])
     QObject::connect(&dji,SIGNAL(appendDjiApiLogQML(QVariant)),item,SLOT(appendDjiApiLogQML(QVariant)));
     QObject::connect(&dji,SIGNAL(signalUpdateActivationButton(QVariant)),item,SLOT(updateActivateButton(QVariant)));
     QObject::connect(&dji,SIGNAL(signalUpdateObtainControlButton(QVariant)),item,SLOT(updateObtainControlButton(QVariant)));
+    QObject::connect(mav_dec, &Mavlink_Raw_Message::uav_type, item,
+                     [item](const QString &vehicleType) {
+        QMetaObject::invokeMethod(item, "updateMavlinkVehicleType",
+                                  Qt::DirectConnection,
+                                  Q_ARG(QVariant, QVariant(vehicleType)));
+    });
+    QObject::connect(mav_dec, &Mavlink_Raw_Message::sys_status, item,
+                     [item](const QString &systemStatus) {
+        QMetaObject::invokeMethod(item, "updateMavlinkSystemStatus",
+                                  Qt::DirectConnection,
+                                  Q_ARG(QVariant, QVariant(systemStatus)));
+    });
+    QObject::connect(simulationFeed, &Ns3SimulationFeed::selectedUavChanged, mav_dec,
+                     [simulationFeed, mav_dec]() {
+        const int selectedId = simulationFeed->selectedUavId();
+        mav_dec->setTargetSystemId(selectedId >= 0 ? selectedId + 1 : 1);
+    });
 
     QObject::connect(item,SIGNAL(flightCommandTakeOff()),mav_dec,SLOT(arm()));
     QObject::connect(item,SIGNAL(flightCommandLand()),mav_dec,SLOT(disarm()));
