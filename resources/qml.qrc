@@ -1,0 +1,14 @@
+<RCC>
+    <qresource prefix="/">
+        <file alias="qtquickcontrols2.conf">qtquickcontrols2.conf</file>
+        <file alias="UavMapForm.qml">../qml/screens/UavMapForm.qml</file>
+        <file alias="UavMap.qml">../qml/maps/UavMap.qml</file>
+        <file alias="UdpConnect.qml">../qml/components/UdpConnect.qml</file>
+        <file alias="DjiActivateUI.qml">../qml/components/DjiActivateUI.qml</file>
+        <file alias="Joystick.qml">../qml/components/Joystick.qml</file>
+        <file alias="Planner.qml">../qml/maps/Planner.qml</file>
+        <file alias="PlotView.qml">../qml/components/PlotView.qml</file>
+        <file alias="PlotMain.qml">../qml/screens/PlotMain.qml</file>
+        <file alias="NetworkBanner.qml">../qml/components/NetworkBanner.qml</file>
+    </qresource>
+</RCC>
