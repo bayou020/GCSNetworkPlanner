@@ -36,28 +36,13 @@ Item {
     function altitudeBounds() {
         if (typeof simulationFeed === "undefined"
                 || simulationFeed === null
-                || simulationFeed.uavs.length === 0) {
+                || simulationFeed.uavCount === 0) {
             return {"min": 0, "max": 0}
         }
-
-        let minAltitude = Number.POSITIVE_INFINITY
-        let maxAltitude = Number.NEGATIVE_INFINITY
-
-        for (let index = 0; index < simulationFeed.uavs.length; ++index) {
-            const uav = simulationFeed.uavs[index]
-            const altitude = Number(uav.altitudeMeters)
-            if (!Number.isFinite(altitude)) {
-                continue
-            }
-            minAltitude = Math.min(minAltitude, altitude)
-            maxAltitude = Math.max(maxAltitude, altitude)
+        return {
+            "min": Number(simulationFeed.minAltitudeMeters),
+            "max": Number(simulationFeed.maxAltitudeMeters)
         }
-
-        if (!Number.isFinite(minAltitude) || !Number.isFinite(maxAltitude)) {
-            return {"min": 0, "max": 0}
-        }
-
-        return {"min": minAltitude, "max": maxAltitude}
     }
 
     function altitudeElevationOffset(altitudeMeters) {
@@ -69,6 +54,20 @@ Item {
         const tiltFactor = 0.65 + Math.max(0.0, Math.min(1.0, map.tilt / 60.0)) * 0.9
         const zoomFactor = Math.max(0.9, Math.min(1.35, 0.9 + (map.zoomLevel - 15.0) / 10.0))
         return (28 + normalized * 84) * tiltFactor * zoomFactor
+    }
+
+    function altitudeProjection(altitudeMeters) {
+        const lift = altitudeElevationOffset(altitudeMeters)
+        const tiltNorm = Math.max(0.0, Math.min(1.0, (map.tilt - 8.0) / 62.0))
+        const zoomNorm = Math.max(0.75, Math.min(1.3, 0.82 + (map.zoomLevel - 15.0) / 9.0))
+        const perspective = lift * tiltNorm * zoomNorm
+        const bearingRad = map.bearing * Math.PI / 180.0
+
+        return {
+            "x": -Math.sin(bearingRad) * perspective * 0.72,
+            "y": -Math.cos(bearingRad) * perspective * 1.08,
+            "tiltNorm": tiltNorm
+        }
     }
 
     function maybeCenterOnSimulation() {
@@ -538,6 +537,7 @@ Item {
                                               ? Number(modelData.altitudeMeters) : 0
                 property real headingDegrees: modelData.headingDegrees !== undefined
                                               ? Number(modelData.headingDegrees) : 0
+                property var projection: root.altitudeProjection(altitudeMeters)
                 property real elevationOffset: root.altitudeElevationOffset(altitudeMeters)
                 property bool showAltitudeIndicator: map.tilt >= 60 && map.zoomLevel >= 4
                 autoFadeIn: false
@@ -573,17 +573,29 @@ Item {
                     width: 92
                     height: 184
 
-                    readonly property real floatingBottom: Math.max(42, groundAnchor.y - elevationOffset)
-                    readonly property real shadowWidth: Math.max(10, 22 - elevationOffset * 0.07)
+                    readonly property real groundCenterX: groundAnchor.x + groundAnchor.width * 0.5
+                    readonly property real groundCenterY: groundAnchor.y + groundAnchor.height * 0.5
+                    readonly property real floatingBottom: Math.max(36, groundAnchor.y - 18)
+                    readonly property real projectedX: projection.x
+                    readonly property real projectedY: projection.y
+                    readonly property real projectedTilt: projection.tiltNorm
+                    readonly property real droneBottomY: groundCenterY + projectedY - 18
+                    readonly property real droneCenterX: groundCenterX + projectedX
+                    readonly property real stemDx: droneCenterX - groundCenterX
+                    readonly property real stemDy: droneBottomY - groundCenterY
+                    readonly property real stemLength: Math.max(8, Math.sqrt(stemDx * stemDx + stemDy * stemDy))
+                    readonly property real stemAngle: Math.atan2(stemDy, stemDx) * 180 / Math.PI + 90
+                    readonly property real shadowWidth: Math.max(12, 28 - elevationOffset * 0.06)
+                    readonly property real shadowHeight: Math.max(5, shadowWidth * (0.38 - projectedTilt * 0.08))
 
                     Rectangle {
-                        anchors.horizontalCenter: groundAnchor.horizontalCenter
-                        anchors.verticalCenter: groundAnchor.verticalCenter
+                        x: uavMarkerBody.groundCenterX - width * 0.5 - uavMarkerBody.projectedX * 0.16
+                        y: uavMarkerBody.groundCenterY - height * 0.5 - Math.max(0, uavMarkerBody.projectedY) * 0.08
                         width: uavMarkerBody.shadowWidth
-                        height: Math.max(5, shadowWidth * 0.46)
+                        height: uavMarkerBody.shadowHeight
                         radius: height / 2
                         color: selected ? "#88ffd54f" : "#7a22384a"
-                        opacity: 0.95
+                        opacity: 0.88 - uavMarkerBody.projectedTilt * 0.18
                     }
 
                     Rectangle {
@@ -600,18 +612,20 @@ Item {
                     }
 
                     Rectangle {
-                        anchors.horizontalCenter: groundAnchor.horizontalCenter
-                        anchors.bottom: groundAnchor.top
+                        x: uavMarkerBody.groundCenterX - width * 0.5
+                        y: uavMarkerBody.groundCenterY - height
                         width: selected ? 4 : 3
-                        height: Math.max(8, elevationOffset)
+                        height: uavMarkerBody.stemLength
                         radius: width / 2
                         color: selected ? "#ffd54f" : "#7693a9"
                         opacity: 0.82
+                        rotation: uavMarkerBody.stemAngle
+                        transformOrigin: Item.Bottom
                     }
 
                     Rectangle {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        anchors.bottom: liveUavImage.bottom
+                        x: liveUavImage.x + liveUavImage.width * 0.5 - width * 0.5
+                        y: liveUavImage.y + liveUavImage.height - height
                         width: 44
                         height: 44
                         radius: 22
@@ -622,28 +636,34 @@ Item {
 
                     Image {
                         id: liveUavImage
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        anchors.bottom: parent.bottom
-                        anchors.bottomMargin: parent.height - floatingBottom
                         sourceSize.width: 40
                         sourceSize.height: 40
                         width: 40
                         height: 40
+                        x: uavMarkerBody.droneCenterX - width * 0.5
+                        y: uavMarkerBody.droneBottomY - height
                         fillMode: Image.PreserveAspectFit
                         smooth: true
                         mipmap: true
                         source: "qrc:/ico/drone_i.ico"
-                        transform: Rotation {
-                            origin.x: liveUavImage.width / 2
-                            origin.y: liveUavImage.height / 2
-                            angle: headingDegrees
-                        }
+                        transform: [
+                            Scale {
+                                origin.x: liveUavImage.width / 2
+                                origin.y: liveUavImage.height
+                                xScale: 1.0 + uavMarkerBody.projectedTilt * 0.08
+                                yScale: 1.0 - uavMarkerBody.projectedTilt * 0.1
+                            },
+                            Rotation {
+                                origin.x: liveUavImage.width / 2
+                                origin.y: liveUavImage.height / 2
+                                angle: headingDegrees
+                            }
+                        ]
                     }
 
                     Rectangle {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        anchors.bottom: liveUavImage.top
-                        anchors.bottomMargin: 6
+                        x: uavMarkerBody.droneCenterX - width * 0.5
+                        y: liveUavImage.y - height - 6
                         color: "#dd174762"
                         radius: 8
                         height: 20
@@ -660,9 +680,8 @@ Item {
                     }
 
                     Rectangle {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        anchors.bottom: groundAnchor.top
-                        anchors.bottomMargin: Math.max(10, elevationOffset + 6)
+                        x: uavMarkerBody.droneCenterX - width * 0.5
+                        y: liveUavImage.y - height - 30
                         visible: showAltitudeIndicator
                         color: selected ? "#d2ffd54f" : "#c5223440"
                         border.color: selected ? "#ffe082" : "#6f9bbd"

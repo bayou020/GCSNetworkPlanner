@@ -135,6 +135,40 @@ MOBILITY_RADIUS=80 \
 ./sim/ns3/scripts/run_live_uav_lte.sh
 ```
 
+Radio and load tuning also work through environment variables on the live helpers:
+
+- shared traffic load
+  - `NS3_TELEMETRY_PAYLOAD`
+  - `NS3_TELEMETRY_INTERVAL_MS`
+  - `NS3_CONTROL_PAYLOAD`
+  - `NS3_CONTROL_INTERVAL_MS`
+- LTE
+  - `NS3_LTE_TX_POWER`
+  - `NS3_LTE_DL_BANDWIDTH`
+  - `NS3_LTE_UL_BANDWIDTH`
+  - `NS3_LTE_INTERSITE_DISTANCE`
+  - `NS3_LTE_COVERAGE_RADIUS`
+- NR
+  - `NS3_NR_TX_POWER`
+  - `NS3_NR_BANDWIDTH`
+  - `NS3_NR_FREQUENCY`
+  - `NS3_NR_NUMEROLOGY`
+  - `NS3_NR_DISTANCE`
+  - `NS3_NR_BS_HEIGHT`
+
+Example:
+
+```bash
+source ./env
+UAVS=20 BASE_STATIONS=4 SIM_TIME=60 \
+NS3_LTE_TX_POWER=38 \
+NS3_LTE_DL_BANDWIDTH=75 \
+NS3_LTE_UL_BANDWIDTH=75 \
+NS3_TELEMETRY_PAYLOAD=256 \
+NS3_TELEMETRY_INTERVAL_MS=50 \
+./sim/ns3/scripts/run_live_uav_lte.sh
+```
+
 The `ORIGIN_LAT` and `ORIGIN_LON` values set the geographic reference point used to project the ns-3 meter-based scenario into GPS coordinates for the QML map.
 
 ### Live inspection workflow

@@ -1,492 +1,261 @@
-/*
- * Copyright (c) 2015-2016 Alex Spataru <alex_spataru@outlook.com>
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
- * THE SOFTWARE.
- */
-
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
 
-
-Item {
-
-    id:mainwindow
+Rectangle {
+    id: mainwindow
     objectName: "window"
+
     property int currentJoystick: 0
-    property int currentPitch: 0
+    property int currentPitch: 3
     property int currentYaw: 0
-    property int currentRoll: 0
-    property int currentThorttle: 0
-    property double axisn: 0
-    property double currentAxis:0
-    property double axisvalue: 0
-    property int currentBarIndex: 0
-    signal  axisCd (double currentAxis,double currentParameter)
-    signal  axisValueChanged(double currentAxis,double valueAxis)
-    signal  joystickProtocolChanged(int index)
-    
-    width: 640
-    height: 480
+    property int currentRoll: 2
+    property int currentThorttle: 1
+    property real axisvalue: 0
+    property int axisCount: 4
+    readonly property var defaultAssignments: [0, 1, 2, 3]
+    readonly property string selectedTargetLabel: typeof simulationFeed !== "undefined"
+                                                  && simulationFeed !== null
+                                                  && simulationFeed.hasSelectedUav
+                                                  ? (simulationFeed.selectedUav.label || "--")
+                                                  : "--"
+    readonly property int selectedTargetSystemId: typeof simulationFeed !== "undefined"
+                                                  && simulationFeed !== null
+                                                  && simulationFeed.hasSelectedUav
+                                                  ? Number(simulationFeed.selectedUavId) + 1
+                                                  : 1
 
-    function generateJoystickWidgets (id) {
-        /* Clear the joystick indicators */
-        axes.model = 0
-        povs.model = 0
-        buttons.model = 0
+    signal axisCd(double currentAxis, double currentParameter)
+    signal axisValueChanged(double currentAxis, double valueAxis)
+    signal joystickProtocolChanged(int index)
 
-        /* Change the current joystick id */
-        currentJoystick = id
-
-        /* Get current joystick information & generate indicators */
-        if (QJoysticks.joystickExists (id)) {
-            //            axes.model = QJoysticks.getNumAxes (id)
-            //            povs.model = QJoysticks.getNumPOVs (id)
-            //            buttons.model = QJoysticks.getNumButtons (id)
-            axes.model = 4
-            povs.model =4
-            buttons.model =1
-        }
-
-        /* Resize window to minimum size */
-        //        width = minimumWidth
-        //        height = minimumHeight
-    }
+    width: 448
+    implicitWidth: 448
+    implicitHeight: contentColumn.implicitHeight + 24
+    radius: 18
+    color: "#d9112333"
+    border.color: "#50697f"
+    border.width: 1
+    clip: true
 
     ListModel {
-    id:listparameters
+        id: listparameters
 
+        ListElement { key: "Yaw"; value: 0 }
+        ListElement { key: "Throttle"; value: 1 }
+        ListElement { key: "Roll"; value: 2 }
+        ListElement { key: "Pitch"; value: 3 }
+        ListElement { key: "None"; value: 4 }
+    }
 
-    ListElement { key: "yaw"; value: 0 }
-    ListElement { key: "thorttle"; value: 1 }
-    ListElement { key: "roll"; value: 2 }
-    ListElement { key: "pitch"; value: 3 }
-    ListElement { key: "none"; value: 4}
+    function generateJoystickWidgets(id) {
+        currentJoystick = Math.max(0, id)
+        axes.model = axisCount
+    }
 
+    function assignmentIndexForAxis(axisIndex) {
+        if (axisIndex >= 0 && axisIndex < defaultAssignments.length) {
+            return defaultAssignments[axisIndex]
+        }
 
-}
+        return 4
+    }
 
+    function updateAssignment(axisIndex, assignmentIndex) {
+        mainwindow.axisCd(axisIndex, assignmentIndex)
+        axismanager(axisIndex, assignmentIndex)
+    }
 
+    function axismanager(axisIndex, assignmentIndex) {
+        switch (assignmentIndex) {
+        case 0:
+            currentYaw = axisIndex
+            break
+        case 1:
+            currentThorttle = axisIndex
+            break
+        case 2:
+            currentRoll = axisIndex
+            break
+        case 3:
+            currentPitch = axisIndex
+            break
+        default:
+            break
+        }
+    }
 
+    Component.onCompleted: {
+        generateJoystickWidgets(joysticks.currentIndex >= 0 ? joysticks.currentIndex : 0)
+        joystickProtocolChanged(protocolCombo.currentIndex)
+    }
 
-
-
-    // Display all the widgets in a vertical layout
-    //
     ColumnLayout {
-        spacing: 5
-        anchors.bottomMargin: -300
+        id: contentColumn
         anchors.fill: parent
-
-
-        //
-        // Joystick selector combobox
-        //
+        anchors.margins: 12
+        spacing: 10
 
         RowLayout {
-            width: 596
-
-            spacing: 5
             Layout.fillWidth: true
-            visible: false
+            spacing: 10
 
-
-            ComboBox {
-                id: joysticks
+            ColumnLayout {
                 Layout.fillWidth: true
-                model: QJoysticks.deviceNames
-                onCurrentIndexChanged: generateJoystickWidgets (currentIndex)
+                spacing: 2
 
+                Text {
+                    text: qsTr("Manual Control")
+                    color: "#f1f5f9"
+                    font.pixelSize: 18
+                    font.bold: true
+                }
+
+                Text {
+                    text: qsTr("Target: %1 (sysid %2)").arg(selectedTargetLabel).arg(selectedTargetSystemId)
+                    color: "#9ec7df"
+                    font.pixelSize: 12
+                    font.bold: true
+                }
+
+                Text {
+                    text: QJoysticks.deviceNames.length > 0
+                          ? qsTr("Input: %1").arg(QJoysticks.deviceNames[currentJoystick] || QJoysticks.deviceNames[0])
+                          : qsTr("Input: Virtual joystick")
+                    color: "#7fa6bd"
+                    font.pixelSize: 11
+                }
             }
 
             ComboBox {
-                id: joysticksProtocol
-                Layout.maximumHeight: 65523
-                Layout.fillHeight: false
-                Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
-                Layout.fillWidth: true
+                id: protocolCombo
+                Layout.preferredWidth: 120
+                model: [
+                    { "key": "MAVLink", "value": 0 },
+                    { "key": "DJI", "value": 1 }
+                ]
                 textRole: "key"
-                model: ListModel {
-                    id:listprotocols
 
-                    ListElement { key: "MavLink"; value: 0}
-                    ListElement { key: "DJI"; value: 1 }
-
-
-                }
                 onCurrentIndexChanged: joystickProtocolChanged(currentIndex)
             }
         }
 
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 10
 
-
-        //
-
-        //
-        // Buttons indicator
-        //
-        GroupBox {
-            id: buttonsgroupbox
-            //            title: qsTr ("Buttons")
-            //            Layout.fillWidth: true
-            //            Layout.fillHeight: true
-            visible: false
-
-            GridLayout {
-                id:buttonslayout
-                rows: 6
-                rowSpacing: 5
-                columnSpacing: 5
+            ComboBox {
+                id: joysticks
                 Layout.fillWidth: true
-                Layout.fillHeight: true
-                flow: GridLayout.TopToBottom
+                model: QJoysticks.deviceNames.length > 0
+                       ? QJoysticks.deviceNames
+                       : [qsTr("Virtual joystick")]
 
-                //
-                // Generate a checkbox for each joystick button
-                //
-                Repeater {
-                    id: buttons
-                    delegate:
-                        Row {
-                        id:rowbuttons
-                        CheckBox {
-                            id:buttonschkbx
-                            enabled: false
-                            Layout.fillWidth: true
-                            text: qsTr ("Button %1").arg (index)
+                onCurrentIndexChanged: generateJoystickWidgets(currentIndex)
+            }
 
-                            //
-                            // React to QJoystick signals
-                            //
-                            Connections {
-                                id:buttonsconnexions
-                                target: QJoysticks
-                                function onButtonChanged(js, button, pressed) {
-                                    if (currentJoystick === js && button === index)
-                                        buttonschkbx.checked = QJoysticks.getButton (js, index)
-                                }
-                            }
-                        }
+            Rectangle {
+                Layout.preferredWidth: 122
+                Layout.preferredHeight: 34
+                radius: 10
+                color: "#182633"
+                border.color: "#345064"
+                border.width: 1
 
-                        ComboBox
-                        {   id:buttonsassignements
-                            Layout.fillWidth: true
-                            //model:MavJoy.deviceNames()
-
-
-                        }
-
-
-
-                    }
-
+                Text {
+                    anchors.centerIn: parent
+                    text: qsTr("%1 axes").arg(axisCount)
+                    color: "#d7e7f2"
+                    font.pixelSize: 12
+                    font.bold: true
                 }
-
             }
         }
 
-        //
-        // POVs indicator
-        //
-        GroupBox {
-            //            title: qsTr ("POVs")
-            //            Layout.fillWidth: true
-            //            Layout.fillHeight: true
-            visible: false
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: 8
 
-            ColumnLayout {
-                spacing: 5
-                Layout.fillWidth: true
-                Layout.fillHeight: true
+            Repeater {
+                id: axes
+                model: axisCount
 
-                //
-                // Generate a spinbox for each joystick POV
-                //
-                Repeater {
-                    id: povs
-                    delegate: SpinBox {
-                        enabled: false
-                        from: 0
-                        to: 360
+                delegate: RowLayout {
+                    required property int index
+
+                    Layout.fillWidth: true
+                    spacing: 10
+
+                    Text {
+                        Layout.preferredWidth: 56
+                        text: qsTr("Axis %1").arg(index + 1)
+                        color: "#d7e7f2"
+                        font.pixelSize: 12
+                        font.bold: true
+                    }
+
+                    ProgressBar {
+                        id: axisBar
                         Layout.fillWidth: true
+                        Layout.preferredHeight: 22
+                        from: -100
+                        to: 100
+                        value: 0
 
-                        //
-                        // React to QJoystick signals
-                        //
+                        background: Rectangle {
+                            implicitWidth: 220
+                            implicitHeight: 22
+                            color: "#e6e6e6"
+                            radius: 11
+                        }
+
+                        contentItem: Item {
+                            implicitWidth: 220
+                            implicitHeight: 22
+
+                            Rectangle {
+                                width: axisBar.visualPosition * parent.width
+                                height: parent.height
+                                radius: 11
+                                color: "#17a81a"
+                            }
+                        }
+
+                        Behavior on value {
+                            NumberAnimation {
+                                duration: 120
+                                easing.type: Easing.OutCubic
+                            }
+                        }
+
                         Connections {
                             target: QJoysticks
-                            function onPovChanged(js, pov, angle) {
-                                if (currentJoystick === js && pov === index)
-                                    value = QJoysticks.getPOV (js, index)
+
+                            function onAxisChanged(js, axis, value) {
+                                if (currentJoystick !== js || axis !== index) {
+                                    return
+                                }
+
+                                axisBar.value = QJoysticks.getAxis(js, index) * 100
+                                axisvalue = QJoysticks.getAxis(js, index) * 1000
+                                mainwindow.axisValueChanged(index, axisvalue)
                             }
                         }
+                    }
+
+                    ComboBox {
+                        id: axesassignements
+                        Layout.preferredWidth: 148
+                        textRole: "key"
+                        model: listparameters
+                        currentIndex: assignmentIndexForAxis(index)
+
+                        Component.onCompleted: updateAssignment(index, currentIndex)
+
+                        onActivated: updateAssignment(index, currentIndex)
                     }
                 }
             }
         }
-
-
-
-        // Axes indicator
-        //
-        GroupBox {
-            //            title: qsTr ("Axes")
-            //            Layout.fillWidth: true
-            //            Layout.fillHeight: true
-
-
-            ColumnLayout {
-                spacing: 5
-                //                Layout.fillWidth: true
-                //                Layout.fillHeight: true
-
-                //
-                // Generate a progressbar for each joystick axis
-                //
-                Repeater {
-                    id: axes
-                    function onItemAdded(index, item) {
-                        currentBarIndex = index
-                    }
-
-
-                    delegate:
-                        Row
-
-                    {
-                        id:rowBar
-                        property int outerIndex: index
-
-
-                        ProgressBar
-                        {
-
-                            id: control
-                            from: -100
-                            to: 100
-                            Layout.fillWidth: true
-
-
-                            value: 0
-
-
-                            background: Rectangle {
-                                implicitWidth: 200
-                                implicitHeight: 20
-                                color: "#e6e6e6"
-                                radius: 17
-                            }
-                            contentItem: Item {
-                                implicitWidth: 200
-                                implicitHeight: 19
-
-                                Rectangle {
-                                    width: control.visualPosition * parent.width
-                                    height: parent.height
-                                    radius: 17
-                                    color: "#17a81a"
-                                }
-                            }
-                            //                                background: Rectangle {
-                            //                                    implicitWidth: 200
-                            //                                    implicitHeight: 12
-                            //                                    color: "#e6e6e6"
-                            //                                    radius: 17
-                            //                                }
-
-                            //                                contentItem: Item {
-                            //                                    implicitWidth: 200
-                            //                                    implicitHeight: 10
-
-                            //                                    Rectangle {
-                            //                                        width: progressbar.visualPosition * parent.width
-                            //                                        height: parent.height
-                            //                                        radius: 16
-                            //                                        color: "#17a81a"
-                            //                                    }
-                            //                                }
-
-                            Behavior on value {NumberAnimation{}}
-
-                            Connections {
-                                target: QJoysticks
-                                function onAxisChanged(js, axis, value) {
-                                    if (currentJoystick === js && index === axis)
-                                        control.value = QJoysticks.getAxis (js, index) * 100
-                                    axisvalue=QJoysticks.getAxis (js, index) * 1000
-                                    // console.log(axisvalue)
-
-                                    mainwindow.axisValueChanged(index,axisvalue)
-                                }
-                            }
-                        }
-                        ComboBox
-                        {    id:axesassignements
-
-                            objectName: "axesObject"
-                            property int assignementIndex: index
-
-
-                            // signal comboboxindex (int indexx)
-
-
-                            textRole: "key"
-                            Layout.fillWidth: true
-                            model: listparameters
-
-
-
-
-                            Connections {
-                                target: axesassignements
-                                function onActivated(index) {
-                                    currentAxis=rowBar.outerIndex
-                                    mainwindow.axisCd(rowBar.outerIndex,index)
-                                    listparam()
-
-                                    axismanager(rowBar.outerIndex,index)
-                                    //axisNumbersChanged(currentRoll, currentPitch, currentYaw,currentThorttle)
-                                    //  comboboxindex(index)
-                                    //  console.log("axxx",listparameters.index)
-
-                                    //console.log(currentAxis+"num")
-                                    //joystickOptionChanged(index)
-                                    // axesassignements.currentIndex=currentBarIndex
-
-
-                                }
-
-                            }
-
-                        }
-                    }
-                }
-            }
-        }
-
-
-
-
-
     }
-
-
-    function axismanager(axisname, comboboxaxe)
-    {
-        //   currentAxis=axisname
-        //        currentOptionJoystick=comboboxaxe
-
-        // console.log ("selecting variable",comboboxaxe)
-        switch (comboboxaxe)
-        {
-
-        case 0:
-            currentYaw=currentAxis
-            console.log("axis yaw " + currentYaw)
-            break
-        case 1:
-            currentThorttle=currentAxis
-            console.log("axis thorttle " + currentThorttle)
-            break
-
-        case 2:
-            currentRoll=currentAxis
-            console.log("axis roll " + currentRoll)
-            console.log("currentvalue " + axisvalue)
-            break
-        case 3:
-            currentPitch=currentAxis
-            console.log("axis pitch " + currentPitch)
-
-            break
-        case 4:
-            console.log("none button")
-
-            break
-
-
-
-
-        }
-
-
-
-    }
-
-
-    function listparam()
-    {
-
-        //    if (!listparameters.value )
-        //    {   listparameters.append(value)
-
-        //    }
-
-    }
-    function stickParam (param)
-
-    {
-
-
-        switch (param)
-        {
-
-        case 0:
-            listparameters.remove(1)
-            listparameters.remove(2)
-            listparameters.remove(3)
-            listparameters.set(0,{key: "yaw", value: 0})
-
-
-            break
-        case 1:
-            listparameters.remove(0)
-            listparameters.remove(2)
-            listparameters.remove(3)
-            listparameters.set(1,{key: "Throttle", value: 1})
-            break
-
-        case 2:
-            listparameters.remove(0)
-            listparameters.remove(1)
-            listparameters.remove(3)
-            listparameters.set(2,{key: "Roll", value: 2})
-            break
-        case 3:
-            listparameters.remove(0)
-            listparameters.remove(1)
-            listparameters.remove(2)
-            listparameters.set(3,{key: "Pitch", value: 3})
-
-            break
-        case 4:
-
-
-            break
-
-
-        }
-
-
-
-
-    }
-
-
 }

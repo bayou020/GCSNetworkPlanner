@@ -1,9 +1,1 @@
 rat,security,uavs,base_stations,flow_id,flow_type,src_ip,dst_ip,src_port,dst_port,tx_packets,rx_packets,lost_packets,pdr,throughput_mbps,mean_delay_ms,mean_jitter_ms
-nr,wireguard,4,2,1,telemetry-uplink,7.0.0.2,1.0.0.2,49153,9000,18,0,0,0.000000,0.000000,0.000000,0.000000
-nr,wireguard,4,2,2,telemetry-uplink,7.0.0.3,1.0.0.2,49153,9000,18,0,0,0.000000,0.000000,0.000000,0.000000
-nr,wireguard,4,2,3,telemetry-uplink,7.0.0.4,1.0.0.2,49153,9000,18,18,0,1.000000,0.022450,19.475708,0.728175
-nr,wireguard,4,2,4,telemetry-uplink,7.0.0.5,1.0.0.2,49153,9000,18,18,0,1.000000,0.022449,19.255469,0.190476
-nr,wireguard,4,2,5,control-downlink,1.0.0.2,7.0.0.2,49153,10000,4,4,0,1.000000,0.003882,17.189283,0.410714
-nr,wireguard,4,2,6,control-downlink,1.0.0.2,7.0.0.3,49154,10001,4,4,0,1.000000,0.003882,17.144640,0.401786
-nr,wireguard,4,2,7,control-downlink,1.0.0.2,7.0.0.4,49155,10002,4,4,0,1.000000,0.003882,17.099998,0.392857
-nr,wireguard,4,2,8,control-downlink,1.0.0.2,7.0.0.5,49156,10003,4,4,0,1.000000,0.003882,17.055356,0.383929

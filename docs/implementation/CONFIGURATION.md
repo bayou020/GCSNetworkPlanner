@@ -111,6 +111,69 @@ This split matters. If both the GCS and the RPi bridge bind the same unicast UDP
 consumer may receive the live ns-3 snapshots and the map can collapse back to the legacy single-UAV
 marker.
 
+### ns-3 Radio And Traffic Tuning
+
+The `run_live_*` helpers inherit environment variables and forward them to the underlying
+LTE or NR scenario automatically. That means you can tune antenna power and offered load
+without editing the `.cc` files.
+
+Shared application-load controls:
+
+- `NS3_TELEMETRY_PAYLOAD`
+- `NS3_TELEMETRY_INTERVAL_MS`
+- `NS3_CONTROL_PAYLOAD`
+- `NS3_CONTROL_INTERVAL_MS`
+
+LTE-specific controls:
+
+- `NS3_LTE_TX_POWER`
+  - eNodeB transmit power in dBm
+- `NS3_LTE_DL_BANDWIDTH`
+  - downlink bandwidth in LTE resource blocks
+- `NS3_LTE_UL_BANDWIDTH`
+  - uplink bandwidth in LTE resource blocks
+- `NS3_LTE_INTERSITE_DISTANCE`
+- `NS3_LTE_COVERAGE_RADIUS`
+
+NR-specific controls:
+
+- `NS3_NR_TX_POWER`
+  - gNodeB transmit power in dBm
+- `NS3_NR_BANDWIDTH`
+  - channel bandwidth in Hz
+- `NS3_NR_FREQUENCY`
+  - carrier frequency in Hz
+- `NS3_NR_NUMEROLOGY`
+- `NS3_NR_DISTANCE`
+- `NS3_NR_BS_HEIGHT`
+- `NS3_NR_SCENARIO_WIDTH`
+- `NS3_NR_SCENARIO_HEIGHT`
+
+Example LTE live run with stronger eNodeBs and heavier telemetry:
+
+```bash
+source ./env
+UAVS=20 BASE_STATIONS=4 SIM_TIME=60 \
+NS3_LTE_TX_POWER=38 \
+NS3_LTE_DL_BANDWIDTH=75 \
+NS3_LTE_UL_BANDWIDTH=75 \
+NS3_TELEMETRY_PAYLOAD=256 \
+NS3_TELEMETRY_INTERVAL_MS=50 \
+./sim/ns3/scripts/run_live_uav_lte.sh
+```
+
+Example NR live run with wider channel bandwidth:
+
+```bash
+source ./env
+UAVS=20 BASE_STATIONS=4 SIM_TIME=60 \
+NS3_NR_TX_POWER=46 \
+NS3_NR_BANDWIDTH=80000000 \
+NS3_NR_NUMEROLOGY=2 \
+NS3_NR_FREQUENCY=3500000000 \
+./sim/ns3/scripts/run_live_uav_nr.sh
+```
+
 ### Simulated Video Transport
 
 The live stack can also push a simulated video feed from `NetworkPlannerRpi` to the GCS.

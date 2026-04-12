@@ -207,6 +207,21 @@ int main(int argc, char *argv[])
         const int selectedId = simulationFeed->selectedUavId();
         mav_dec->setTargetSystemId(selectedId >= 0 ? selectedId + 1 : 1);
     });
+    QObject::connect(simulationFeed, &Ns3SimulationFeed::selectedUavChanged, &a,
+                     [item, simulationFeed]() {
+        if (!item->property("manualControlActive").toBool())
+        {
+            return;
+        }
+
+        const int selectedId = simulationFeed->selectedUavId();
+        simulationFeed->setManualControlOverlay(selectedId >= 0 ? selectedId + 1 : 1,
+                                                0,
+                                                0,
+                                                0,
+                                                0,
+                                                true);
+    });
     QObject::connect(simulationFeed,
                      &Ns3SimulationFeed::selectedUavChanged,
                      videoStreamFeed,
@@ -225,11 +240,20 @@ int main(int argc, char *argv[])
     QObject::connect(joystick,
                      &JoystickParameters::qmljoystickcontrols,
                      &a,
-                     [item, &dji, mav_dec, activeVehicleBackend](int roll,
-                                                                int pitch,
-                                                                int yaw,
-                                                                int throttle) {
-        if (!item->property("manualControlActive").toBool())
+                     [item, &dji, mav_dec, activeVehicleBackend, simulationFeed](int roll,
+                                                                                 int pitch,
+                                                                                 int yaw,
+                                                                                 int throttle) {
+        const bool manualControlActive = item->property("manualControlActive").toBool();
+        const int selectedId = simulationFeed->selectedUavId();
+        simulationFeed->setManualControlOverlay(selectedId >= 0 ? selectedId + 1 : 1,
+                                                roll,
+                                                pitch,
+                                                yaw,
+                                                throttle,
+                                                manualControlActive);
+
+        if (!manualControlActive)
         {
             return;
         }

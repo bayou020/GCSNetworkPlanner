@@ -634,6 +634,9 @@ main(int argc, char* argv[])
     double altitudeMeters = 120.0;
     double interSiteDistanceMeters = 750.0;
     double coverageRadiusMeters = 250.0;
+    uint16_t downlinkBandwidthRbs = 50;
+    uint16_t uplinkBandwidthRbs = 50;
+    double enbTxPowerDbm = 30.0;
     uint32_t telemetryPayloadBytes = 180;
     uint32_t telemetryIntervalMs = 100;
     uint32_t controlPayloadBytes = 96;
@@ -662,6 +665,13 @@ main(int argc, char* argv[])
                  interSiteDistanceMeters);
     cmd.AddValue("coverageRadius", "Placement radius around each base station in meters",
                  coverageRadiusMeters);
+    cmd.AddValue("dlBandwidth",
+                 "LTE downlink bandwidth in resource blocks (6, 15, 25, 50, 75, 100)",
+                 downlinkBandwidthRbs);
+    cmd.AddValue("ulBandwidth",
+                 "LTE uplink bandwidth in resource blocks (6, 15, 25, 50, 75, 100)",
+                 uplinkBandwidthRbs);
+    cmd.AddValue("txPower", "eNodeB transmit power in dBm", enbTxPowerDbm);
     cmd.AddValue("telemetryPayload", "Telemetry payload bytes before security overhead",
                  telemetryPayloadBytes);
     cmd.AddValue("telemetryIntervalMs", "Telemetry emission interval in milliseconds",
@@ -700,6 +710,8 @@ main(int argc, char* argv[])
     Ptr<LteHelper> lteHelper = CreateObject<LteHelper>();
     Ptr<PointToPointEpcHelper> epcHelper = CreateObject<PointToPointEpcHelper>();
     lteHelper->SetEpcHelper(epcHelper);
+    lteHelper->SetEnbDeviceAttribute("DlBandwidth", UintegerValue(downlinkBandwidthRbs));
+    lteHelper->SetEnbDeviceAttribute("UlBandwidth", UintegerValue(uplinkBandwidthRbs));
 
     Ptr<Node> pgw = epcHelper->GetPgwNode();
 
@@ -765,6 +777,14 @@ main(int argc, char* argv[])
 
     NetDeviceContainer enbLteDevs = lteHelper->InstallEnbDevice(enbNodes);
     NetDeviceContainer ueLteDevs = lteHelper->InstallUeDevice(ueNodes);
+    for (uint32_t i = 0; i < enbLteDevs.GetN(); ++i)
+    {
+        Ptr<LteEnbNetDevice> enbDevice = DynamicCast<LteEnbNetDevice>(enbLteDevs.Get(i));
+        if (enbDevice != nullptr)
+        {
+            enbDevice->GetPhy()->SetAttribute("TxPower", DoubleValue(enbTxPowerDbm));
+        }
+    }
 
     internet.Install(ueNodes);
     Ipv4InterfaceContainer ueIpIfaces = epcHelper->AssignUeIpv4Address(NetDeviceContainer(ueLteDevs));

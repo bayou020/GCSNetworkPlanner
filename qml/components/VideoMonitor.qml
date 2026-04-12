@@ -93,8 +93,10 @@ Item {
                 anchors.fill: parent
                 anchors.margins: 1
                 fillMode: Image.PreserveAspectFit
+                asynchronous: true
                 smooth: true
                 cache: false
+                retainWhileLoading: true
                 source: frameSource
                 visible: hasFrame
             }

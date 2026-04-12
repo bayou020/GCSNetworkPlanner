@@ -171,6 +171,15 @@ Item
         } else {
             mavJoy.setManualControlEnabled(normalizedState)
         }
+        if (typeof simulationFeed !== "undefined" && simulationFeed !== null) {
+            const systemId = item1.selectedSimulationSystemId()
+            simulationFeed.setManualControlOverlay(systemId > 0 ? systemId : 1,
+                                                   0,
+                                                   0,
+                                                   0,
+                                                   0,
+                                                   normalizedState)
+        }
         item1.flightCommandManualControl(normalizedState)
     }
 
@@ -1827,11 +1836,11 @@ Item
         item1.componentJoystick = Qt.createComponent("qrc:/Joystick.qml")
         item1.windowJoystick    = componentJoystick.createObject(item1)
 
-        item1.windowJoystick.anchors.horizontalCenter = item1.horizontalCenter
+        item1.windowJoystick.anchors.left = item1.left
+        item1.windowJoystick.anchors.leftMargin = 18
         item1.windowJoystick.anchors.bottom  = item1.bottom
-        //item1.windowJoystick.parentWin = item1
-        //item1.windowJoystick.anchors.horizontalCenter = item1.horizontalCenter
-        //        item1.windowJoystick.anchors.verticalCenter   = item1.verticalCenter
+        item1.windowJoystick.anchors.bottomMargin = 18
+        item1.windowJoystick.z = 120
         item1.windowJoystick.visible = false
         item1.windowJoystick.axisCd.connect(item1.joystickParameters)
         item1.windowJoystick.axisValueChanged.connect(item1.joystickValue)
