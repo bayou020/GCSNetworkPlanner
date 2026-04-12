@@ -39,7 +39,7 @@ Before spending time on a larger change, make sure you can reproduce a working l
 - `legacy/` contains archived code kept out of the primary build
 - `resources/` contains QRC manifests
 
-See [docs/PROJECT_LAYOUT.md](/home/boots/work/phd/GCSNetworkPlanner/docs/PROJECT_LAYOUT.md) for a fuller breakdown.
+See [docs/implementation/PROJECT_LAYOUT.md](/home/boots/work/phd/GCSNetworkPlanner/docs/implementation/PROJECT_LAYOUT.md) for a fuller breakdown.
 
 ## Coding Expectations
 
@@ -55,9 +55,9 @@ See [docs/PROJECT_LAYOUT.md](/home/boots/work/phd/GCSNetworkPlanner/docs/PROJECT
 
 Contributor-facing changes should update the relevant documentation:
 
-- build/setup changes -> `docs/BUILD.md`
-- runtime configuration changes -> `docs/CONFIGURATION.md`
-- architectural changes -> `docs/ARCHITECTURE.md` or `docs/PROJECT_LAYOUT.md`
+- build/setup changes -> `docs/implementation/BUILD.md`
+- runtime configuration changes -> `docs/implementation/CONFIGURATION.md`
+- architectural changes -> `docs/implementation/ARCHITECTURE.md` or `docs/implementation/PROJECT_LAYOUT.md`
 - support/security process changes -> `SUPPORT.md` or `SECURITY.md`
 
 ## Pull Requests

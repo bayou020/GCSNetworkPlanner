@@ -111,6 +111,35 @@ This split matters. If both the GCS and the RPi bridge bind the same unicast UDP
 consumer may receive the live ns-3 snapshots and the map can collapse back to the legacy single-UAV
 marker.
 
+### Simulated Video Transport
+
+The live stack can also push a simulated video feed from `NetworkPlannerRpi` to the GCS.
+
+Shared endpoint variables:
+
+- `NPVIDEO_HOST`
+  - default `127.0.0.1`
+- `NPVIDEO_PORT`
+  - default `5600`
+
+RPi-side video controls:
+
+- `NPRPI_ENABLE_VIDEO_SIMULATION`
+- `NPRPI_VIDEO_HOST`
+- `NPRPI_VIDEO_PORT`
+- `NPRPI_VIDEO_WIDTH`
+- `NPRPI_VIDEO_HEIGHT`
+- `NPRPI_VIDEO_FPS`
+- `NPRPI_VIDEO_JPEG_QUALITY`
+- `NPRPI_VIDEO_PATTERN`
+- `NPRPI_VIDEO_MAX_DELAY_MS`
+
+The selected UAV in the GCS drives which simulated video stream is shown in the right-side video panel.
+
+See:
+
+- [docs/implementation/VIDEO_SIMULATION.md](/home/boots/work/phd/GCSNetworkPlanner/docs/implementation/VIDEO_SIMULATION.md)
+
 ### Qt Runtime
 
 - `QSG_RHI_BACKEND`

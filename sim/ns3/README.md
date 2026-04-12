@@ -89,6 +89,7 @@ The desktop GCS can now consume live ns-3 snapshots on `127.0.0.1:45454` and ren
 - a live status card showing the current RAT and simulation time
 - clickable UAV markers that populate the right-side network banner with live link metrics
 - moving UAVs in live runs so the banner values vary while the simulation is active
+- a selected-UAV video monitor fed by the RPi bridge and degraded by the live ns-3 metrics
 
 The live transport is UDP/JSON over localhost. The Qt app listens by default on:
 
@@ -152,6 +153,14 @@ If you run the `*_with_rpi.sh` helpers, the same live snapshot stream is also co
 packets and forwards them over the local pilot UDP channel. That keeps the GCS control path and
 the ns-3 fleet view synchronized without forcing the GCS and the RPi bridge to compete for the
 same UDP port.
+
+Those same helpers now also let `NetworkPlannerRpi` emit a simulated GStreamer video feed whose
+delay and drop behavior are shaped by the live per-UAV ns-3 metrics. The GCS can then display the
+selected UAV’s video stream in real time.
+
+See:
+
+- [docs/implementation/VIDEO_SIMULATION.md](/home/boots/work/phd/GCSNetworkPlanner/docs/implementation/VIDEO_SIMULATION.md)
 
 ## Research notes
 

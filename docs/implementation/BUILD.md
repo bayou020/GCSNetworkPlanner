@@ -97,7 +97,7 @@ The basic verification pass is:
 3. launch with `./scripts/run.sh`
 4. confirm the QML UI loads and the MapLibre plugin is available
 
-## ns-3 Cellular Research Workspace
+## ns-3 Cellular Simulation Workspace
 
 The repository also contains an external `ns-3` experiment workspace under:
 
@@ -133,3 +133,38 @@ or:
 ./scripts/run.sh
 ./sim/ns3/scripts/run_live_uav_nr.sh
 ```
+
+## Live Video-Loss Test
+
+The integrated LTE or NR plus RPi wrappers can also feed a simulated video stream into the GCS while the live ns-3 link metrics evolve.
+
+Terminal 1:
+
+```bash
+source ./env
+./scripts/run.sh
+```
+
+Terminal 2:
+
+```bash
+source ./env
+UAVS=20 BASE_STATIONS=4 SIM_TIME=60 LIVE_INTERVAL_MS=500 MOBILITY=1 \
+./sim/ns3/scripts/run_live_uav_lte_with_rpi.sh
+```
+
+Then click a UAV on the map. The GCS will show:
+
+- per-UAV LTE or NR metrics in the network panel
+- the selected UAV’s simulated video stream in the video monitor
+
+The default local video endpoint is:
+
+```text
+NPVIDEO_HOST=127.0.0.1
+NPVIDEO_PORT=5600
+```
+
+For tuning and impairment-model details, see:
+
+- [docs/implementation/VIDEO_SIMULATION.md](/home/boots/work/phd/GCSNetworkPlanner/docs/implementation/VIDEO_SIMULATION.md)

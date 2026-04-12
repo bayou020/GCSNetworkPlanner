@@ -2,7 +2,7 @@
 
 ## Overview
 
-NetworkPlannerGCS is a Qt desktop application composed of a QML front end and a set of C++ services exposed into the QML engine. The application is still shaped by its original research scope, but the repository is now organized around operational domains rather than ad hoc root-level files.
+NetworkPlannerGCS is a Qt desktop application composed of a QML front end and a set of C++ services exposed into the QML engine. The application is still shaped by some earlier prototype-era constraints, but the repository is now organized around operational domains rather than ad hoc root-level files.
 
 ## Runtime Layers
 
@@ -61,4 +61,3 @@ High-level telemetry/control flow:
 - CMake is the primary build system.
 - QML and icon assets are packaged through `resources/qml.qrc` and `resources/assets.qrc`.
 - QRC aliases are used to keep stable runtime URLs while allowing physical files to live in cleaner folders.
-
