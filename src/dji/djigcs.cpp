@@ -229,6 +229,41 @@ void DJI::onboardSDK::DjiGcs::taskGoHome()
     flight->task(type);
 }
 
+void DJI::onboardSDK::DjiGcs::setManualControlEnabled(bool enabled)
+{
+    manualControlEnabled = enabled;
+    apiCoreSetControl(enabled);
+    vrc->setControl(enabled, VirtualRC::CutOff_ToLogic);
+    if (!manualControlEnabled)
+    {
+        vrc->neutralVRCSticks();
+    }
+}
+
+void DJI::onboardSDK::DjiGcs::sendVirtualRcCommand(int roll, int pitch, int yaw, int throttle)
+{
+    if (!manualControlEnabled)
+    {
+        return;
+    }
+
+    auto normalizeChannel = [](int value) -> uint32_t {
+        const int boundedValue = qBound(-1000, value, 1000);
+        return static_cast<uint32_t>(qBound(364,
+                                            1024 + (boundedValue * 660) / 1000,
+                                            1684));
+    };
+
+    VirtualRCData data = vrc->getVRCData();
+    data.roll = normalizeChannel(roll);
+    data.pitch = normalizeChannel(pitch);
+    data.yaw = normalizeChannel(yaw);
+    data.throttle = normalizeChannel(throttle);
+    data.gear = 1324;
+    data.mode = 1024;
+    vrc->sendData(data);
+}
+
 void DJI::onboardSDK::DjiGcs::updateUavRoll()
 {
     emit sigUpdateUavRoll(flight->getRoll());

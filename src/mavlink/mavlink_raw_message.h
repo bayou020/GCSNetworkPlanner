@@ -17,6 +17,7 @@ class Mavlink_Raw_Message : public QObject
     Q_OBJECT
 public:
     explicit Mavlink_Raw_Message(QObject *parent = 0);
+    Q_INVOKABLE QVariantMap vehicleStateForSystemId(int systemId) const;
 
     void    imu_scaled_values(mavlink_message_t message_2d);
     void    gps_int_values(mavlink_message_t message_2d);
@@ -135,6 +136,7 @@ public slots:
     void    arm();
     void    disarm();
     void    takeoff();
+    void    land();
     void    returntolaunch();
     void    setMode(int baseMode, int customMode);
     void    heartbeat_slot();
@@ -163,6 +165,7 @@ public slots:
     void    decodeSpeech();
     void    setIndexMode(int index);
     void    setIndexModeResult();
+    void    setManualControlEnabled(bool enabled);
 
     QStringList deviceNames() const;
 
@@ -196,6 +199,7 @@ private:
 float yaw,roll,pitch;
     int targetSystemId = 1;
     QHash<int, QVariantMap> vehicleStates;
+    bool manualControlEnabled = false;
 };
 
 #endif // MAVLINK_RAW_MESSAGE_H

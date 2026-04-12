@@ -66,6 +66,8 @@ namespace DJI
             void taskTakeOff();
             void taskLanding();
             void taskGoHome();
+            void setManualControlEnabled(bool enabled);
+            void sendVirtualRcCommand(int roll, int pitch, int yaw, int throttle);
 
             void updateUavRoll();
             void updateUavPitch();
@@ -86,6 +88,7 @@ namespace DJI
             WayPoint *wp;
             WayPointData wayPointDataTmp;
             QTimer timerUpdateFlightInstruments;
+            bool manualControlEnabled = false;
         };
     }
 }

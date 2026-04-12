@@ -14,6 +14,7 @@ Item
     signal disconnectSpeak();
     signal flightCommandLand()
     signal flightCommandRtl()
+    signal flightCommandManualControl(bool enabled)
     signal flightCommandAddDrone()
     signal newDdsArgumentsDJI(var list)
     signal newDdsArgumentsMAV(var list)
@@ -32,6 +33,7 @@ Item
     property real batteryPercentage: -1
     property real batteryVoltage: -1
     property real batteryCourrant: -1
+    property bool manualControlActive: false
     property real flightHeadingDeg: 0
     property real flightPitchDeg: 0
     property real flightRollDeg: 0
@@ -139,6 +141,94 @@ Item
         item1.windowNetwork.clearSimulationParameters()
     }
 
+    function activeVehicleBackend()
+    {
+        if (item1.windowDds
+                && item1.windowDds.getConnectionStatus() === "Connected"
+                && item1.windowDds.getUavType() === "DJI") {
+            return "DJI"
+        }
+
+        return "MAVLINK"
+    }
+
+    function setManualControlState(enabled)
+    {
+        const normalizedState = !!enabled
+        if (item1.manualControlActive === normalizedState) {
+            if (item1.windowJoystick) {
+                item1.windowJoystick.visible = normalizedState
+            }
+            return
+        }
+
+        item1.manualControlActive = normalizedState
+        if (item1.windowJoystick) {
+            item1.windowJoystick.visible = normalizedState
+        }
+        if (item1.activeVehicleBackend() === "DJI") {
+            djiController.setManualControlEnabled(normalizedState)
+        } else {
+            mavJoy.setManualControlEnabled(normalizedState)
+        }
+        item1.flightCommandManualControl(normalizedState)
+    }
+
+    function enableManualControlForSelectedUav()
+    {
+        if (item1.activeVehicleBackend() === "MAVLINK") {
+            const manualMode = flightModesModel.get(0)
+            modesList.currentIndex = 0
+            sendSignalFlightModes(manualMode.base, manualMode.custom)
+        }
+        item1.setManualControlState(true)
+    }
+
+    function disableManualControl()
+    {
+        item1.setManualControlState(false)
+    }
+
+    function dispatchTakeoffCommand()
+    {
+        item1.disableManualControl()
+        if (item1.activeVehicleBackend() === "DJI") {
+            djiController.taskTakeOff()
+            item1.flightCommandTakeOff()
+            return
+        }
+
+        mavJoy.arm()
+        mavJoy.takeoff()
+        item1.flightCommandTakeOff()
+    }
+
+    function dispatchLandCommand()
+    {
+        item1.disableManualControl()
+        if (item1.activeVehicleBackend() === "DJI") {
+            djiController.taskLanding()
+            item1.flightCommandLand()
+            return
+        }
+
+        mavJoy.land()
+        item1.flightCommandLand()
+    }
+
+    function dispatchRtlCommand()
+    {
+        item1.disableManualControl()
+        if (item1.activeVehicleBackend() === "DJI") {
+            djiController.taskGoHome()
+            item1.flightCommandRtl()
+            return
+        }
+
+        mavJoy.returntolaunch()
+        item1.flightCommandRtl()
+    }
+
     function updateFlightHeading(yawRadians)
     {
         if (typeof simulationFeed !== "undefined"
@@ -223,18 +313,101 @@ Item
         return numericValue.toFixed(precision) + (unit ? " " + unit : "")
     }
 
+    function selectedSimulationSystemId()
+    {
+        if (typeof simulationFeed === "undefined"
+                || simulationFeed === null
+                || !simulationFeed.hasSelectedUav) {
+            return -1
+        }
+
+        return Number(simulationFeed.selectedUavId) + 1
+    }
+
+    function selectedMavlinkVehicleState()
+    {
+        if (typeof mavJoy === "undefined" || mavJoy === null) {
+            return {}
+        }
+
+        const systemId = item1.selectedSimulationSystemId()
+        if (systemId > 0) {
+            return mavJoy.vehicleStateForSystemId(systemId)
+        }
+
+        return item1.currentMavlinkVehicleData()
+    }
+
+    function selectedVehicleUiData()
+    {
+        let data = {}
+
+        if (typeof simulationFeed !== "undefined"
+                && simulationFeed !== null
+                && simulationFeed.hasSelectedUav) {
+            data = Object.assign({}, simulationFeed.selectedUav)
+        }
+
+        const mavlinkState = item1.selectedMavlinkVehicleState()
+        if (!mavlinkState || Object.keys(mavlinkState).length === 0) {
+            return data
+        }
+
+        if (mavlinkState.vehicleType) {
+            data.vehicleType = mavlinkState.vehicleType
+        }
+        if (mavlinkState.systemStatus) {
+            data.systemStatus = mavlinkState.systemStatus
+        }
+        if (mavlinkState.batteryPercentage !== undefined) {
+            data.batteryPercentage = mavlinkState.batteryPercentage
+        }
+        if (mavlinkState.batteryVoltage !== undefined) {
+            data.batteryVoltage = mavlinkState.batteryVoltage
+        }
+        if (mavlinkState.batteryCurrentMilliAmps !== undefined) {
+            data.batteryCurrentMilliAmps = mavlinkState.batteryCurrentMilliAmps
+        }
+        if (mavlinkState.latitude !== undefined) {
+            data.latitude = mavlinkState.latitude
+        }
+        if (mavlinkState.longitude !== undefined) {
+            data.longitude = mavlinkState.longitude
+        }
+        if (mavlinkState.altitudeMeters !== undefined) {
+            data.altitudeMeters = mavlinkState.altitudeMeters
+        }
+        if (mavlinkState.yawRadians !== undefined) {
+            data.yawRadians = mavlinkState.yawRadians
+            if (data.headingDegrees === undefined) {
+                data.headingDegrees = ((Number(mavlinkState.yawRadians) * 180 / Math.PI) % 360 + 360) % 360
+            }
+        }
+        if (mavlinkState.pitchRadians !== undefined) {
+            data.pitchRadians = mavlinkState.pitchRadians
+        }
+        if (mavlinkState.rollRadians !== undefined) {
+            data.rollRadians = mavlinkState.rollRadians
+        }
+
+        return data
+    }
+
     function refreshVehicleInfoModel()
     {
-        batteryInfoList.clear()
-        batteryInfoList.append({"key": "Type", "value": item1.mavlinkVehicleType || "--"})
-        batteryInfoList.append({"key": "Status", "value": item1.mavlinkSystemStatus || "--"})
-        batteryInfoList.append({"key": "Battery", "value": item1.formatVehicleMetric(item1.batteryPercentage, 0, "%")})
-        batteryInfoList.append({"key": "Voltage", "value": item1.formatVehicleMetric(item1.batteryVoltage, 2, "V")})
-        batteryInfoList.append({"key": "Current", "value": item1.formatVehicleMetric(item1.batteryCourrant, 0, "mA")})
+        const vehicleData = item1.selectedVehicleUiData()
 
-        if (item1.mavlinkLatitude !== null && item1.mavlinkLongitude !== null) {
-            batteryInfoList.append({"key": "Latitude", "value": Number(item1.mavlinkLatitude).toFixed(6)})
-            batteryInfoList.append({"key": "Longitude", "value": Number(item1.mavlinkLongitude).toFixed(6)})
+        batteryInfoList.clear()
+        batteryInfoList.append({"key": "Type", "value": vehicleData.vehicleType || "--"})
+        batteryInfoList.append({"key": "Status", "value": vehicleData.systemStatus || "--"})
+        batteryInfoList.append({"key": "Battery", "value": item1.formatVehicleMetric(vehicleData.batteryPercentage, 0, "%")})
+        batteryInfoList.append({"key": "Voltage", "value": item1.formatVehicleMetric(vehicleData.batteryVoltage, 2, "V")})
+        batteryInfoList.append({"key": "Current", "value": item1.formatVehicleMetric(vehicleData.batteryCurrentMilliAmps, 0, "mA")})
+
+        if (vehicleData.latitude !== undefined && vehicleData.latitude !== null
+                && vehicleData.longitude !== undefined && vehicleData.longitude !== null) {
+            batteryInfoList.append({"key": "Latitude", "value": Number(vehicleData.latitude).toFixed(6)})
+            batteryInfoList.append({"key": "Longitude", "value": Number(vehicleData.longitude).toFixed(6)})
         } else {
             batteryInfoList.append({"key": "Latitude", "value": "--"})
             batteryInfoList.append({"key": "Longitude", "value": "--"})
@@ -265,42 +438,7 @@ Item
 
     function mergedSelectedVehicleData()
     {
-        let data = {}
-
-        if (typeof simulationFeed !== "undefined"
-                && simulationFeed !== null
-                && simulationFeed.hasSelectedUav) {
-            data = Object.assign({}, simulationFeed.selectedUav)
-        }
-
-        if (!item1.hasMavlinkVehicleData()) {
-            return data
-        }
-
-        const mavlinkData = item1.currentMavlinkVehicleData()
-        if (mavlinkData.vehicleType && mavlinkData.vehicleType !== "--") {
-            data.vehicleType = mavlinkData.vehicleType
-        }
-        if (mavlinkData.systemStatus && mavlinkData.systemStatus !== "--") {
-            data.systemStatus = mavlinkData.systemStatus
-        }
-        if (mavlinkData.batteryPercentage !== null) {
-            data.batteryPercentage = mavlinkData.batteryPercentage
-        }
-        if (mavlinkData.batteryVoltage !== null) {
-            data.batteryVoltage = mavlinkData.batteryVoltage
-        }
-        if (mavlinkData.batteryCurrentMilliAmps !== null) {
-            data.batteryCurrentMilliAmps = mavlinkData.batteryCurrentMilliAmps
-        }
-        if (mavlinkData.latitude !== null) {
-            data.latitude = mavlinkData.latitude
-        }
-        if (mavlinkData.longitude !== null) {
-            data.longitude = mavlinkData.longitude
-        }
-
-        return data
+        return item1.selectedVehicleUiData()
     }
 
     function updateMavlinkVehicleType(vehicleType)
@@ -321,6 +459,7 @@ Item
         target: typeof simulationFeed !== "undefined" ? simulationFeed : null
 
         function onSelectedUavChanged() {
+            item1.refreshVehicleInfoModel()
             item1.updateSimulationNetworkBanner()
         }
     }
@@ -374,15 +513,21 @@ Item
 
         //opacity: 0.7
         source: {
-            if (batteryPercentage>=75)
+            const vehicleData = item1.selectedVehicleUiData()
+            const selectedBatteryPercentage = vehicleData.batteryPercentage !== undefined
+                    && vehicleData.batteryPercentage !== null
+                    ? Number(vehicleData.batteryPercentage)
+                    : batteryPercentage
+
+            if (selectedBatteryPercentage>=75)
             {
                 "qrc:/ico/full battery.png"
             }
-            else if(batteryPercentage<75&&batteryPercentage>=50)
+            else if(selectedBatteryPercentage<75&&selectedBatteryPercentage>=50)
             {
                 "qrc:/ico/75 battery.png"
             }
-            else if(batteryPercentage<50&&batteryPercentage>=25)
+            else if(selectedBatteryPercentage<50&&selectedBatteryPercentage>=25)
             {
                 "qrc:/ico/50 battery.png"
             }
@@ -596,9 +741,9 @@ Item
 
         }
         onCurrentIndexChanged:  {
-
-
-
+            if (item1.manualControlActive && currentIndex !== 0) {
+                item1.disableManualControl()
+            }
             //            currentIndexMission=currentIndex
             getIndexMode(currentIndex)
             //currentIndex=currentIndexMission
@@ -663,10 +808,12 @@ Item
             NumberAnimation { target: imageTakeOff; property: "opacity" ;from:0; to: 1; duration: 250 }
             NumberAnimation { target: imageRTL; property: "opacity" ;from:0; to: 1; duration: 250}
             NumberAnimation { target: imageLand; property: "opacity" ;from:0; to: 1; duration: 250 }
+            NumberAnimation { target: imageManualControl; property: "opacity" ;from:0; to: 1; duration: 250 }
         }
         SequentialAnimation {
             id:seqClose1
             running: false
+            NumberAnimation { target: imageManualControl; property: "opacity" ;from:1; to: 0; duration: 250 }
             NumberAnimation { target: imageLand; property: "opacity" ;from:1; to: 0; duration: 250 }
             NumberAnimation { target: imageRTL; property: "opacity" ;from:1; to: 0; duration: 250}
             NumberAnimation { target: imageTakeOff; property: "opacity" ;from:1; to: 0; duration: 250 }
@@ -852,8 +999,8 @@ Item
     ColumnLayout
     {
         id: rowLayoutFlightCommand
-        width: 35
-        height: 146
+        width: 40
+        height: 190
         anchors.top: parent.top
         anchors.topMargin: 48
         anchors.left: parent.left
@@ -920,6 +1067,9 @@ Item
                 id: mouseareaimageTakeOff
                 anchors.fill: parent
                 hoverEnabled: true
+                onClicked: {
+                    item1.dispatchTakeoffCommand()
+                }
                 onEntered:
                 {
                     imageTakeOff.source = "qrc:/ico/takeoffi.ico";
@@ -930,11 +1080,6 @@ Item
 
 
                 }
-            }
-
-            Component.onCompleted:
-            {
-                mouseareaimageTakeOff.clicked.connect(item1.flightCommandTakeOff)
             }
         }
 
@@ -952,6 +1097,9 @@ Item
                 id: mouseareaimageRTL
                 anchors.fill: parent
                 hoverEnabled: true
+                onClicked: {
+                    item1.dispatchRtlCommand()
+                }
                 onEntered:
                 {
                     imageRTL.source = "qrc:/ico/rtli.ico";
@@ -961,10 +1109,6 @@ Item
                     imageRTL.source = "qrc:/ico/rtl.ico";
                 }
 
-            }
-            Component.onCompleted:
-            {
-                mouseareaimageRTL.clicked.connect(item1.flightCommandRtl)
             }
         }
 
@@ -982,6 +1126,9 @@ Item
                 id: mouseareaimageLand
                 anchors.fill: parent
                 hoverEnabled: true
+                onClicked: {
+                    item1.dispatchLandCommand()
+                }
                 onEntered:
                 {
                     imageLand.source = "qrc:/ico/landi.ico";
@@ -991,9 +1138,44 @@ Item
                     imageLand.source = "qrc:/ico/land.ico";
                 }
             }
-            Component.onCompleted:
+        }
+
+        Image {
+            id: imageManualControl
+            y: 111
+            width: 35
+            height: 35
+            sourceSize.height: 50
+            sourceSize.width: 50
+            opacity: 0
+            source: item1.manualControlActive ? "qrc:/ico/rci.png" : "qrc:/ico/rc.png"
+            ToolTip.visible: mouseareaimageManual.containsMouse
+            ToolTip.text: item1.manualControlActive
+                          ? qsTr("Disable manual control for the selected UAV")
+                          : qsTr("Enable manual control for the selected UAV")
+
+            MouseArea
             {
-                mouseareaimageLand.clicked.connect(item1.flightCommandLand)
+                id: mouseareaimageManual
+                anchors.fill: parent
+                hoverEnabled: true
+                onClicked: {
+                    if (item1.manualControlActive) {
+                        item1.disableManualControl()
+                    } else {
+                        item1.enableManualControlForSelectedUav()
+                    }
+                }
+                onEntered:
+                {
+                    imageManualControl.source = "qrc:/ico/rci.png";
+                }
+                onExited:
+                {
+                    imageManualControl.source = item1.manualControlActive
+                                               ? "qrc:/ico/rci.png"
+                                               : "qrc:/ico/rc.png";
+                }
             }
         }
 
@@ -1130,6 +1312,39 @@ Item
         pitchDegrees: item1.flightPitchDeg
         rollDegrees: item1.flightRollDeg
         altitudeMeters: item1.flightAltitudeMeters
+    }
+
+    VideoMonitor {
+        id: videoMonitor
+        anchors.right: parent.right
+        anchors.rightMargin: 16
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: 16
+        hasFrame: typeof videoStreamFeed !== "undefined"
+                  && videoStreamFeed !== null
+                  && videoStreamFeed.hasSelectedFrame
+        frameSource: typeof videoStreamFeed !== "undefined"
+                     && videoStreamFeed !== null
+                     ? videoStreamFeed.selectedFrameUrl : ""
+        uavLabel: typeof simulationFeed !== "undefined"
+                  && simulationFeed !== null
+                  && simulationFeed.hasSelectedUav
+                  ? (simulationFeed.selectedUav.label || "--") : "--"
+        resolution: typeof videoStreamFeed !== "undefined"
+                    && videoStreamFeed !== null
+                    ? videoStreamFeed.selectedResolution : "--"
+        receiveFps: typeof videoStreamFeed !== "undefined"
+                    && videoStreamFeed !== null
+                    ? videoStreamFeed.selectedReceiveFps : 0
+        droppedFrames: typeof videoStreamFeed !== "undefined"
+                       && videoStreamFeed !== null
+                       ? videoStreamFeed.selectedDroppedFrames : 0
+        receivedFrames: typeof videoStreamFeed !== "undefined"
+                        && videoStreamFeed !== null
+                        ? videoStreamFeed.selectedReceivedFrames : 0
+        frameAgeMs: typeof videoStreamFeed !== "undefined"
+                    && videoStreamFeed !== null
+                    ? videoStreamFeed.selectedFrameAgeMs : -1
     }
 
 
@@ -1337,7 +1552,11 @@ Item
             opacity: 0;
             sourceSize.height: 50
             sourceSize.width: 50
-            source: "qrc:/ico/rc.png"
+            source: item1.manualControlActive ? "qrc:/ico/rci.png" : "qrc:/ico/rc.png"
+            ToolTip.visible: mouseareaimageJoystick.containsMouse
+            ToolTip.text: item1.manualControlActive
+                          ? qsTr("Show or hide the manual joystick panel")
+                          : qsTr("Enable manual control for the selected UAV")
             MouseArea
             {
                 id: mouseareaimageJoystick
@@ -1353,23 +1572,17 @@ Item
                 }
                 onExited:
                 {
-                    imageJoystick.source = "qrc:/ico/rc.png";
+                    imageJoystick.source = item1.manualControlActive
+                                           ? "qrc:/ico/rci.png"
+                                           : "qrc:/ico/rc.png";
                 }
                 onClicked: {
-                    // item1.windowPlot.visible = true
-
-                    switch
-                    (item1.windowJoystick.visible)
-
-
-                    {case true :
-                         item1.windowJoystick.visible=false
-                         break;
-                     case false:
-                         item1.windowJoystick.visible=true
-                         break;
+                    if (!item1.manualControlActive) {
+                        item1.enableManualControlForSelectedUav()
+                        return
                     }
 
+                    item1.windowJoystick.visible = !item1.windowJoystick.visible
                 }
                 Component.onCompleted: {
 
@@ -1584,8 +1797,8 @@ Item
         item1.windowNetwork.anchors.rightMargin = 16
         item1.windowNetwork.anchors.top = flightHud.bottom
         item1.windowNetwork.anchors.topMargin = 10
-        item1.windowNetwork.anchors.bottom = item1.bottom
-        item1.windowNetwork.anchors.bottomMargin = 16
+        item1.windowNetwork.anchors.bottom = videoMonitor.top
+        item1.windowNetwork.anchors.bottomMargin = 10
         item1.windowNetwork.visible = false
         item1.sendNetworkIcons.connect(item1.windowNetwork.getNetworkParameters)
         item1.guiQMLLTEParameters.connect(item1.windowNetwork.getLteParameters)
@@ -1672,6 +1885,7 @@ Item
     onFlightCommandLand: console.log("Land");
     onFlightCommandRtl: console.log("rtl")
     onFlightCommandTakeOff: console.log("takeoff")
+    onFlightCommandManualControl: console.log("manual control", enabled)
     onFlightCommandAddDrone: console.log("addDrone")
 
     function functionButtonVersionClicked()
@@ -1680,7 +1894,7 @@ Item
         console.log("UavMapForm.onButtonVersionClicked")
     }
 
-    function functionDjiObatainControl()
+    function functionDjiObatainControl(state)
     {
         djiObatainControl(state)
         console.log("UavMapForm.onDjiObatainControl")
@@ -1768,7 +1982,9 @@ Item
         acceptedIndex=row
         console.log("accepted index: "+ acceptedIndex )
         console.log("Mode flight number " + row +" "+ flightModesModel.get(row).base )
-        sendSignalFlightModes(flightModesModel.get(row).base, flightModesModel.get(row).custom)
+        if (item1.activeVehicleBackend() !== "DJI") {
+            sendSignalFlightModes(flightModesModel.get(row).base, flightModesModel.get(row).custom)
+        }
         //       missionResultSignal(row)
 
     }

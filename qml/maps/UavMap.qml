@@ -33,6 +33,44 @@ Item {
         }
     }
 
+    function altitudeBounds() {
+        if (typeof simulationFeed === "undefined"
+                || simulationFeed === null
+                || simulationFeed.uavs.length === 0) {
+            return {"min": 0, "max": 0}
+        }
+
+        let minAltitude = Number.POSITIVE_INFINITY
+        let maxAltitude = Number.NEGATIVE_INFINITY
+
+        for (let index = 0; index < simulationFeed.uavs.length; ++index) {
+            const uav = simulationFeed.uavs[index]
+            const altitude = Number(uav.altitudeMeters)
+            if (!Number.isFinite(altitude)) {
+                continue
+            }
+            minAltitude = Math.min(minAltitude, altitude)
+            maxAltitude = Math.max(maxAltitude, altitude)
+        }
+
+        if (!Number.isFinite(minAltitude) || !Number.isFinite(maxAltitude)) {
+            return {"min": 0, "max": 0}
+        }
+
+        return {"min": minAltitude, "max": maxAltitude}
+    }
+
+    function altitudeElevationOffset(altitudeMeters) {
+        const bounds = altitudeBounds()
+        const spread = Math.max(0.1, bounds.max - bounds.min)
+        const normalized = spread < 0.5
+                ? 0.5
+                : Math.max(0.0, Math.min(1.0, (altitudeMeters - bounds.min) / spread))
+        const tiltFactor = 0.65 + Math.max(0.0, Math.min(1.0, map.tilt / 60.0)) * 0.9
+        const zoomFactor = Math.max(0.9, Math.min(1.35, 0.9 + (map.zoomLevel - 15.0) / 10.0))
+        return (28 + normalized * 84) * tiltFactor * zoomFactor
+    }
+
     function maybeCenterOnSimulation() {
         if (simulationCentered
                 || typeof simulationFeed === "undefined"
@@ -496,12 +534,16 @@ Item {
                                         ? Number(modelData.latitude) : 0
                 property real longitude: modelData.longitude !== undefined
                                          ? Number(modelData.longitude) : 0
+                property real altitudeMeters: modelData.altitudeMeters !== undefined
+                                              ? Number(modelData.altitudeMeters) : 0
                 property real headingDegrees: modelData.headingDegrees !== undefined
                                               ? Number(modelData.headingDegrees) : 0
+                property real elevationOffset: root.altitudeElevationOffset(altitudeMeters)
+                property bool showAltitudeIndicator: map.tilt >= 60 && map.zoomLevel >= 4
                 autoFadeIn: false
-                coordinate: QtPositioning.coordinate(latitude, longitude)
+                coordinate: QtPositioning.coordinate(latitude, longitude, altitudeMeters)
                 anchorPoint.x: uavMarkerBody.width * 0.5
-                anchorPoint.y: 46
+                anchorPoint.y: groundAnchor.y
                 zoomLevel: map.zoomLevel
                 z: selected ? 40 : 25
 
@@ -529,11 +571,47 @@ Item {
                 sourceItem: Item {
                     id: uavMarkerBody
                     width: 92
-                    height: 72
+                    height: 184
+
+                    readonly property real floatingBottom: Math.max(42, groundAnchor.y - elevationOffset)
+                    readonly property real shadowWidth: Math.max(10, 22 - elevationOffset * 0.07)
+
+                    Rectangle {
+                        anchors.horizontalCenter: groundAnchor.horizontalCenter
+                        anchors.verticalCenter: groundAnchor.verticalCenter
+                        width: uavMarkerBody.shadowWidth
+                        height: Math.max(5, shadowWidth * 0.46)
+                        radius: height / 2
+                        color: selected ? "#88ffd54f" : "#7a22384a"
+                        opacity: 0.95
+                    }
+
+                    Rectangle {
+                        id: groundAnchor
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.bottom: parent.bottom
+                        anchors.bottomMargin: 8
+                        width: 10
+                        height: 10
+                        radius: 5
+                        color: selected ? "#ffd54f" : "#d2141d28"
+                        border.color: selected ? "#ffd54f" : "#58758a"
+                        border.width: 1.5
+                    }
+
+                    Rectangle {
+                        anchors.horizontalCenter: groundAnchor.horizontalCenter
+                        anchors.bottom: groundAnchor.top
+                        width: selected ? 4 : 3
+                        height: Math.max(8, elevationOffset)
+                        radius: width / 2
+                        color: selected ? "#ffd54f" : "#7693a9"
+                        opacity: 0.82
+                    }
 
                     Rectangle {
                         anchors.horizontalCenter: parent.horizontalCenter
-                        anchors.bottom: parent.bottom
+                        anchors.bottom: liveUavImage.bottom
                         width: 44
                         height: 44
                         radius: 22
@@ -546,6 +624,7 @@ Item {
                         id: liveUavImage
                         anchors.horizontalCenter: parent.horizontalCenter
                         anchors.bottom: parent.bottom
+                        anchors.bottomMargin: parent.height - floatingBottom
                         sourceSize.width: 40
                         sourceSize.height: 40
                         width: 40
@@ -563,7 +642,8 @@ Item {
 
                     Rectangle {
                         anchors.horizontalCenter: parent.horizontalCenter
-                        anchors.top: parent.top
+                        anchors.bottom: liveUavImage.top
+                        anchors.bottomMargin: 6
                         color: "#dd174762"
                         radius: 8
                         height: 20
@@ -576,6 +656,28 @@ Item {
                             font.pixelSize: 11
                             font.bold: true
                             text: modelData.label
+                        }
+                    }
+
+                    Rectangle {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.bottom: groundAnchor.top
+                        anchors.bottomMargin: Math.max(10, elevationOffset + 6)
+                        visible: showAltitudeIndicator
+                        color: selected ? "#d2ffd54f" : "#c5223440"
+                        border.color: selected ? "#ffe082" : "#6f9bbd"
+                        border.width: 1
+                        radius: 7
+                        height: 18
+                        width: Math.max(40, altitudeLabel.implicitWidth + 12)
+
+                        Text {
+                            id: altitudeLabel
+                            anchors.centerIn: parent
+                            color: selected ? "#1d2630" : "#f2f8fc"
+                            font.pixelSize: 10
+                            font.bold: true
+                            text: Math.round(altitudeMeters) + " m"
                         }
                     }
 

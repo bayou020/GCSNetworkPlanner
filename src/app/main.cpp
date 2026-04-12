@@ -29,6 +29,7 @@
 #include "mavlink/mav_gcs_manager.h"
 #include "weather_service.h"
 #include "ns3_simulation_feed.h"
+#include "video_stream_feed.h"
 
 int main(int argc, char *argv[])
 {
@@ -56,6 +57,8 @@ int main(int argc, char *argv[])
     QGimball *gimbal=new QGimball;
     WeatherService *weatherService = new WeatherService(&a);
     Ns3SimulationFeed *simulationFeed = new Ns3SimulationFeed(&a);
+    VideoStreamFeed *videoStreamFeed = new VideoStreamFeed(&a);
+    DJI::onboardSDK::DjiGcs dji;
 
 
     // loading QML view
@@ -78,6 +81,7 @@ int main(int argc, char *argv[])
     const QString mapboxAccessToken = qEnvironmentVariable("MAPBOX_ACCESS_TOKEN");
     const QString mapboxStyleUrl = qEnvironmentVariable("MAPBOX_STYLE_URL");
     simulationFeed->startListening();
+    videoStreamFeed->startListening();
 
     /* Enable the virtual joystick */
     instance->setVirtualJoystickRange (1);
@@ -88,8 +92,10 @@ int main(int argc, char *argv[])
      */
     engine->rootContext()->setContextProperty("QJoysticks", instance);
     engine->rootContext()->setContextProperty("mavJoy", mav_dec);
+    engine->rootContext()->setContextProperty("djiController", &dji);
     engine->rootContext()->setContextProperty("weatherService", weatherService);
     engine->rootContext()->setContextProperty("simulationFeed", simulationFeed);
+    engine->rootContext()->setContextProperty("videoStreamFeed", videoStreamFeed);
     engine->rootContext()->setContextProperty("mapboxAccessToken", mapboxAccessToken);
     engine->rootContext()->setContextProperty("mapboxStyleUrl", mapboxStyleUrl);
     w.setSource(QUrl(QStringLiteral("qrc:/UavMapForm.qml")));
@@ -107,11 +113,22 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-
-
-    //loading DJI manager
-    DJI::onboardSDK::DjiGcs dji;
     udp->bindHost();
+
+    const auto activeVehicleBackend = [item]() -> QString {
+        QVariant backendResult;
+        if (QMetaObject::invokeMethod(item,
+                                      "activeVehicleBackend",
+                                      Q_RETURN_ARG(QVariant, backendResult)))
+        {
+            const QString backend = backendResult.toString().trimmed().toUpper();
+            if (backend == QLatin1String("DJI"))
+            {
+                return backend;
+            }
+        }
+        return QStringLiteral("MAVLINK");
+    };
 
     //    //    //--------UDP__Connection----------//
     QObject::connect(udp,SIGNAL(onPilotChanged(QByteArray)),mav_dec,SLOT(dds_mavlink_decode(QByteArray)),Qt::DirectConnection);
@@ -164,12 +181,6 @@ int main(int argc, char *argv[])
     //--------Mavlink__Commands----------//
 
 
-    QObject::connect(item,SIGNAL(flightCommandTakeOff()),mav_dec,SLOT(arm()));
-    QObject::connect(item,SIGNAL(flightCommandLand()),mav_dec,SLOT(disarm()));
-  //  QObject::connect(item,SIGNAL(flightCommandRtl()),mav_dec,SLOT(returntolaunch()));
-      QObject::connect(item,SIGNAL(flightCommandRtl()),mav_dec,SLOT(parameter_shrinker()));
-
-
     //--------END----------//
 
     QObject::connect(item,SIGNAL(buttonVersionClicked()),&dji,SLOT(apiCoreDroneVersion()));
@@ -196,10 +207,12 @@ int main(int argc, char *argv[])
         const int selectedId = simulationFeed->selectedUavId();
         mav_dec->setTargetSystemId(selectedId >= 0 ? selectedId + 1 : 1);
     });
-
-    QObject::connect(item,SIGNAL(flightCommandTakeOff()),mav_dec,SLOT(arm()));
-    QObject::connect(item,SIGNAL(flightCommandLand()),mav_dec,SLOT(disarm()));
-    // QObject::connect(item,SIGNAL(flightCommandRtl()),mav_dec,SLOT(returntolaunch()));
+    QObject::connect(simulationFeed,
+                     &Ns3SimulationFeed::selectedUavChanged,
+                     videoStreamFeed,
+                     [simulationFeed, videoStreamFeed]() {
+        videoStreamFeed->setSelectedUavId(simulationFeed->selectedUavId());
+    });
 
     //-------------Latititude_longitude_Signals_to_mission------------//
     QObject::connect(item,SIGNAL(sendSignalLatitude(QVariant)),mav_dec,SLOT(get_QML_test(QVariant)));
@@ -209,7 +222,26 @@ int main(int argc, char *argv[])
     QObject::connect(item,SIGNAL(joystickParameters(double,double)),joystick,SLOT(get_axis_qml(double,double)));
     QObject::connect(item,SIGNAL(joystickValue(double,double)),joystick,SLOT(get_axis_value_qml(double,double)));
     QObject::connect(item,SIGNAL(joystickProtocolChanged(int)),joystick,SLOT(get_joystick_protocol_qml(int)));
-    QObject::connect(joystick,SIGNAL(qmlMavLinkjoystickcontrols(int,int,int,int)),mav_dec,SLOT(ch3_joystick(int,int,int,int)));
+    QObject::connect(joystick,
+                     &JoystickParameters::qmljoystickcontrols,
+                     &a,
+                     [item, &dji, mav_dec, activeVehicleBackend](int roll,
+                                                                int pitch,
+                                                                int yaw,
+                                                                int throttle) {
+        if (!item->property("manualControlActive").toBool())
+        {
+            return;
+        }
+
+        if (activeVehicleBackend() == QLatin1String("DJI"))
+        {
+            dji.sendVirtualRcCommand(roll, pitch, yaw, throttle);
+            return;
+        }
+
+        mav_dec->ch3_joystick(roll, pitch, yaw, throttle);
+    });
     //---------Mission_Modes_____________//
     QObject::connect(item,SIGNAL(sendSignalFlightModes(int,int)),mav_dec,SLOT(setMode(int,int)));
     QObject::connect(mav_dec,SIGNAL(sendMissionSetResult(QVariant)),item,SLOT(resultFlightMode(QVariant)));

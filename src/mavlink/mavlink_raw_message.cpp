@@ -3,6 +3,7 @@
 #include "qtsdljoystick.h"
 #include <QDateTime>
 #include <QVariant>
+#include <cstring>
 
 
 
@@ -38,6 +39,12 @@ Mavlink_Raw_Message::Mavlink_Raw_Message(QObject *parent) : QObject(parent)
     timer->start(41);
     yaw=0;roll=0;pitch=0;
 
+}
+
+QVariantMap Mavlink_Raw_Message::vehicleStateForSystemId(int systemId) const
+{
+    const int boundedSystemId = qBound(1, systemId, 250);
+    return vehicleStateForSystem(boundedSystemId);
 }
 
 
@@ -452,6 +459,20 @@ void Mavlink_Raw_Message::takeoff()
 
 }
 
+void Mavlink_Raw_Message::land()
+{
+    mavlink_message_t message_2d;
+
+    mavlink_command_long_t land_command_msg;
+    memset(&land_command_msg, 0, sizeof(land_command_msg));
+    land_command_msg.command = MAV_CMD_NAV_LAND;
+    land_command_msg.target_system = targetSystemId;
+    land_command_msg.target_component = 1;
+    land_command_msg.confirmation = 0;
+    mavlink_msg_command_long_encode(1, 0, &message_2d, &land_command_msg);
+    dds_mavlink_encode(message_2d);
+}
+
 void Mavlink_Raw_Message::returntolaunch()
 {
     mavlink_message_t message_2d;
@@ -642,6 +663,11 @@ void Mavlink_Raw_Message::ch3_joystick(int roll, int pitch, int yaw, int throttl
 
 void Mavlink_Raw_Message::mavlink_joystick()
 {
+    if (!manualControlEnabled)
+    {
+        return;
+    }
+
     mavlink_message_t message_2d;
     mavlink_manual_control_t manual;///Msg to override rc channels
     //_throttle=_throttle+_thurst;
@@ -659,6 +685,21 @@ void Mavlink_Raw_Message::mavlink_joystick()
     //    qDebug()<<"x real value" <<manual.x;
     //    qDebug()<<"r real value" <<manual.r;
 
+}
+
+void Mavlink_Raw_Message::setManualControlEnabled(bool enabled)
+{
+    manualControlEnabled = enabled;
+    if (!manualControlEnabled)
+    {
+        _roll = 0;
+        _pitch = 0;
+        _yaw = 0;
+        _throttle = 0;
+        _throttle1 = 0;
+        _thurst = 0;
+        _thurst1 = 0;
+    }
 }
 
 
