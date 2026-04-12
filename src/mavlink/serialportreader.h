@@ -41,7 +41,7 @@
 #include <QByteArray>
 #include <QObject>
 #include <iostream>
-#include "common/mavlink.h"
+#include "ardupilotmega/mavlink.h"
 
 
 QT_USE_NAMESPACE

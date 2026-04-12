@@ -8,7 +8,7 @@
 #include <QMutex>
 #include <QDebug>
 #include <QSerialPort>
-#include "mavlink/c_library_v1-master/common/mavlink.h"
+#include "ardupilotmega/mavlink.h"
 
 
 class QGimball : public QObject

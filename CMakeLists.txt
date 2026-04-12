@@ -53,12 +53,14 @@ find_package(QMapLibre REQUIRED COMPONENTS Location HINTS "${MAPLIBRE_INSTALL_PR
 
 find_package(PkgConfig REQUIRED)
 pkg_search_module(SDL2 REQUIRED IMPORTED_TARGET sdl2 SDL2)
+set(MAVLINK_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/third_party/mavlink/generated")
 
 set(PROJECT_SOURCES
     src/app/main.cpp
     src/core/file_writer.cpp
     src/core/logging.cpp
     src/core/ns3_simulation_feed.cpp
+    src/core/video_stream_feed.cpp
     src/dji/djigcs.cpp
     src/dji/QonboardSDK.cpp
     src/mavlink/mav_gcs_manager.cpp
@@ -154,7 +156,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/src/weather
     ${CMAKE_SOURCE_DIR}/third_party
     ${CMAKE_SOURCE_DIR}/third_party/dji_sdk/inc
-    ${CMAKE_SOURCE_DIR}/third_party/mavlink/c_library_v1-master
+    ${MAVLINK_INCLUDE_DIR}
     ${CMAKE_SOURCE_DIR}/third_party/qfi
     ${CMAKE_SOURCE_DIR}/third_party/qcustomplot
     ${CMAKE_SOURCE_DIR}/third_party/QJoysticks/src

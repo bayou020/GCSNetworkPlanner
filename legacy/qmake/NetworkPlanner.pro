@@ -17,7 +17,7 @@ TEMPLATE = app
 INCLUDEPATH += \
     src_qfi \
     dji_sdk/inc \
-    mavlink/mavlink/c_library_v1-master
+    ../../third_party/mavlink/generated
 
 SOURCES += main.cpp\
     dji_sdk/src/DJI_API.cpp \
