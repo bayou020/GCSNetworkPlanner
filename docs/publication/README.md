@@ -9,6 +9,7 @@ These documents are the publication-enablement layer for the paper:
 - [Data Model](./DATA_MODEL.md)
 - [Gap Closure Report](./GAP_CLOSURE_REPORT.md)
 - [Publication Gate Report](./PUBLICATION_GATE_REPORT.md)
+- [Sim Verification Report](./SIM_VERIFICATION_REPORT.md)
 - [Readiness Checklist](./READINESS_CHECKLIST.md)
 - [Experiment Execution Plan](./EXPERIMENT_EXECUTION_PLAN.md)
 - [Methods Skeleton](./METHODS_SKELETON.md)

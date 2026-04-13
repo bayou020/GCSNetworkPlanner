@@ -33,6 +33,7 @@ CANONICAL_COLUMNS = [
     "battery_pct",
     "battery_voltage_v",
     "rtt_ms",
+    "delay_ms",
     "jitter_ms",
     "packet_loss_pct",
     "throughput_mbps",
@@ -59,6 +60,9 @@ EXTENDED_COLUMNS = [
     "pdr",
     "channel",
     "result_code",
+    "measurement_family",
+    "link_quality",
+    "serving_label",
     "raw_source_file",
 ]
 
@@ -73,6 +77,7 @@ NUMERIC_FIELDS = {
     "battery_pct",
     "battery_voltage_v",
     "rtt_ms",
+    "delay_ms",
     "jitter_ms",
     "packet_loss_pct",
     "throughput_mbps",
@@ -101,6 +106,7 @@ COMPARISON_METRICS = [
     "mean_packet_loss_pct",
     "mean_throughput_mbps",
     "mean_rsrp_dbm",
+    "mean_rsrq_db",
     "mean_sinr_db",
 ]
 
@@ -212,6 +218,33 @@ def infer_metric_origin(event_type: str, row: dict[str, Any]) -> str:
     return ""
 
 
+def infer_measurement_family(row: dict[str, Any]) -> str:
+    if row.get("measurement_family"):
+        return str(row["measurement_family"])
+
+    event_type = str(row.get("event_type") or "")
+    metric_origin = str(row.get("metric_origin") or "")
+    status = str(row.get("status") or "").lower()
+
+    if metric_origin == "flow_monitor" or event_type == "flow_performance_sample":
+        return "sim_flow_performance"
+    if metric_origin == "link_model":
+        return "sim_link_model"
+    if event_type == "network_sample":
+        if status == "measured":
+            return "field_modem"
+        if status == "simulated":
+            return "proxy_modem_simulated"
+        return "network_sample_generic"
+    if event_type == "command_ack":
+        return "command_ack"
+    if event_type == "battery_sample":
+        return "vehicle_status"
+    if event_type == "sim_snapshot":
+        return "snapshot_estimate"
+    return ""
+
+
 def scenario_parts(scenario_id: str) -> dict[str, Any]:
     tokens = [token for token in scenario_id.split("-") if token]
     parsed = {
@@ -224,6 +257,79 @@ def scenario_parts(scenario_id: str) -> dict[str, Any]:
     }
     parsed["is_valid_pattern"] = len(tokens) >= 6
     return parsed
+
+
+def normalize_sync_method(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def is_unspecified_sync_method(value: Any) -> bool:
+    method = normalize_sync_method(value)
+    return not method or method.lower() == "unspecified"
+
+
+def summarize_sync_metadata(
+    dataset_manifest: dict[str, Any], rows: list[dict[str, str]]
+) -> dict[str, Any]:
+    scenario = dataset_manifest.get("scenario", {})
+    manifest_timing = dataset_manifest.get("run_manifest", {}).get("timing", {})
+    manifest_method = normalize_sync_method(manifest_timing.get("sync_method"))
+    source_methods = {
+        source: normalize_sync_method(metadata.get("sync_method"))
+        for source, metadata in sorted((dataset_manifest.get("source_metadata") or {}).items())
+    }
+    sync_event_methods = sorted(
+        {
+            normalize_sync_method(row.get("sync_method"))
+            for row in rows
+            if row.get("event_type") == "sync_status"
+            and normalize_sync_method(row.get("sync_method"))
+        }
+    )
+    specified_methods = {
+        method
+        for method in [manifest_method, *source_methods.values(), *sync_event_methods]
+        if not is_unspecified_sync_method(method)
+    }
+
+    issues: list[str] = []
+    if scenario.get("domain") == "field":
+        if is_unspecified_sync_method(manifest_method):
+            issues.append("manifest_sync_method_unspecified")
+        for source, method in source_methods.items():
+            if is_unspecified_sync_method(method):
+                issues.append(f"source_sync_method_unspecified:{source}")
+        if not sync_event_methods:
+            issues.append("sync_status_event_missing")
+        elif any(is_unspecified_sync_method(method) for method in sync_event_methods):
+            issues.append("sync_status_event_unspecified")
+    if len(specified_methods) > 1:
+        issues.append("inconsistent_sync_methods")
+
+    effective_method = ""
+    if not is_unspecified_sync_method(manifest_method):
+        effective_method = manifest_method
+    elif len(specified_methods) == 1:
+        effective_method = next(iter(specified_methods))
+
+    if "inconsistent_sync_methods" in issues:
+        status = "inconsistent"
+    elif issues:
+        status = "unspecified"
+    else:
+        status = "configured" if effective_method else "unspecified"
+
+    return {
+        "status": status,
+        "effective_method": effective_method or None,
+        "manifest_method": manifest_method or None,
+        "manifest_note": manifest_timing.get("notes") or None,
+        "source_methods": source_methods,
+        "sync_event_methods": sync_event_methods,
+        "issues": issues,
+    }
 
 
 def preferred_evidence_layers_for_scenario(scenario_id: str) -> list[str]:
@@ -248,7 +354,25 @@ def normalized_row(base: dict[str, Any]) -> dict[str, Any]:
             row[canonical] = "" if value is None else value
     row["evidence_layer"] = infer_evidence_layer(str(row["source"]), str(row["event_type"]), row)
     row["metric_origin"] = infer_metric_origin(str(row["event_type"]), row)
+    row["measurement_family"] = infer_measurement_family(row)
     return row
+
+
+def preferred_measurement_families_for_metric(scenario_id: str, metric_name: str) -> set[str] | None:
+    domain = scenario_parts(scenario_id).get("domain")
+    if domain == "field":
+        if metric_name in {"mean_rtt_ms", "p95_rtt_ms", "mean_rsrp_dbm", "mean_rsrq_db", "mean_sinr_db"}:
+            return {"field_modem"}
+        if metric_name in {"mean_jitter_ms", "mean_packet_loss_pct", "mean_throughput_mbps"}:
+            return {"field_modem"}
+        return None
+    if domain == "sim":
+        if metric_name in {"mean_rtt_ms", "p95_rtt_ms", "mean_rsrp_dbm", "mean_rsrq_db", "mean_sinr_db"}:
+            return {"sim_link_model"}
+        if metric_name in {"mean_jitter_ms", "mean_packet_loss_pct", "mean_throughput_mbps"}:
+            return {"sim_flow_performance"}
+        return None
+    return None
 
 
 def normalize_raw_run(raw_run_dir: Path, normalized_root: Path, write_parquet: bool) -> Path:
@@ -292,10 +416,10 @@ def normalize_raw_run(raw_run_dir: Path, normalized_root: Path, write_parquet: b
                         "run_id": payload.get("run_id", run_id),
                         "event_id": f"{payload.get('source', path.stem)}-csv-{index:06d}",
                         "source": payload.get("source", path.stem),
-                        "event_type": "network_sample",
+                        "event_type": "flow_performance_sample",
                         "rat": payload.get("rat"),
                         "security_profile": payload.get("security_profile"),
-                        "rtt_ms": payload.get("mean_delay_ms"),
+                        "delay_ms": payload.get("mean_delay_ms"),
                         "jitter_ms": payload.get("mean_jitter_ms"),
                         "packet_loss_pct": packet_loss,
                         "throughput_mbps": payload.get("throughput_mbps"),
@@ -303,10 +427,45 @@ def normalize_raw_run(raw_run_dir: Path, normalized_root: Path, write_parquet: b
                         "note": f"flow_monitor:{payload.get('flow_type', 'unknown')}",
                         "evidence_layer": payload.get("evidence_layer", "simulator_export"),
                         "metric_origin": payload.get("metric_origin", "flow_monitor"),
+                        "measurement_family": payload.get("measurement_family", "sim_flow_performance"),
                         "sim_time_s": payload.get("sim_time_s"),
                         "flow_id": payload.get("flow_id"),
                         "flow_type": payload.get("flow_type"),
                         "pdr": payload.get("pdr"),
+                        "raw_source_file": path.name,
+                    }
+                )
+            )
+
+    for path in sorted(raw_run_dir.glob("ns3_*_link_model.csv")):
+        for index, payload in enumerate(load_rows_from_csv(path), start=1):
+            rows.append(
+                normalized_row(
+                    {
+                        "scenario_id": payload.get("scenario_id", scenario_id),
+                        "run_id": payload.get("run_id", run_id),
+                        "event_id": f"{payload.get('source', path.stem)}-csv-{index:06d}",
+                        "source": payload.get("source", path.stem),
+                        "event_type": "network_sample",
+                        "uav_id": payload.get("uav_id"),
+                        "rat": payload.get("rat"),
+                        "security_profile": payload.get("security_profile"),
+                        "rtt_ms": payload.get("ping_ms"),
+                        "jitter_ms": payload.get("jitter_ms"),
+                        "packet_loss_pct": payload.get("packet_loss_pct"),
+                        "throughput_mbps": payload.get("throughput_mbps"),
+                        "rssi_dbm": payload.get("rssi_dbm"),
+                        "rsrp_dbm": payload.get("rsrp_dbm"),
+                        "rsrq_db": payload.get("rsrq_db"),
+                        "sinr_db": payload.get("sinr_db"),
+                        "status": "exported",
+                        "note": f"link_model:{payload.get('quality', 'unknown')}",
+                        "link_quality": payload.get("quality"),
+                        "serving_label": payload.get("serving_label"),
+                        "evidence_layer": payload.get("evidence_layer", "simulator_export"),
+                        "metric_origin": payload.get("metric_origin", "link_model"),
+                        "measurement_family": payload.get("measurement_family", "sim_link_model"),
+                        "sim_time_s": payload.get("sim_time_s"),
                         "raw_source_file": path.name,
                     }
                 )
@@ -408,7 +567,9 @@ def summarize_normalized_run(normalized_run_dir: Path, analysis_root: Path) -> P
 
     metric_summary_rows = []
     representative_metrics: dict[str, float | None] = {}
+    representative_metric_details: dict[str, dict[str, Any]] = {}
     preferred_evidence_layers = preferred_evidence_layers_for_scenario(scenario_id)
+    sync_summary = summarize_sync_metadata(dataset_manifest, rows)
     evidence_rows = [
         row
         for row in rows
@@ -417,27 +578,64 @@ def summarize_normalized_run(normalized_run_dir: Path, analysis_root: Path) -> P
     metric_map = {
         "mean_rtt_ms": ("rtt_ms", {"network_sample"}),
         "p95_rtt_ms": ("rtt_ms", {"network_sample"}),
-        "mean_jitter_ms": ("jitter_ms", {"network_sample"}),
-        "mean_packet_loss_pct": ("packet_loss_pct", {"network_sample"}),
-        "mean_throughput_mbps": ("throughput_mbps", {"network_sample"}),
+        "mean_jitter_ms": ("jitter_ms", {"network_sample", "flow_performance_sample"}),
+        "mean_packet_loss_pct": ("packet_loss_pct", {"network_sample", "flow_performance_sample"}),
+        "mean_throughput_mbps": ("throughput_mbps", {"network_sample", "flow_performance_sample"}),
         "mean_rsrp_dbm": ("rsrp_dbm", {"network_sample"}),
+        "mean_rsrq_db": ("rsrq_db", {"network_sample"}),
         "mean_sinr_db": ("sinr_db", {"network_sample"}),
     }
     for metric_name, (field_name, preferred_event_types) in metric_map.items():
-        preferred_values = [
-            parse_numeric(row, field_name)
+        preferred_families = preferred_measurement_families_for_metric(scenario_id, metric_name)
+        selected_rows = [
+            row
             for row in evidence_rows
             if row["event_type"] in preferred_event_types
+            and (
+                preferred_families is None
+                or str(row.get("measurement_family") or "") in preferred_families
+            )
         ]
-        numeric_values = [value for value in preferred_values if value is not None]
+        numeric_values = [
+            value
+            for value in (parse_numeric(row, field_name) for row in selected_rows)
+            if value is not None
+        ]
+        fallback_used = ""
         if not numeric_values and field_name == "rtt_ms":
-            fallback_values = [parse_numeric(row, field_name) for row in ack_rows]
-            numeric_values = [value for value in fallback_values if value is not None]
+            selected_rows = [row for row in ack_rows]
+            numeric_values = [
+                value
+                for value in (parse_numeric(row, field_name) for row in selected_rows)
+                if value is not None
+            ]
+            if numeric_values:
+                fallback_used = "command_ack"
+        if not numeric_values and field_name == "packet_loss_pct":
+            selected_rows = [
+                row
+                for row in evidence_rows
+                if row["event_type"] == "battery_sample"
+            ]
+            numeric_values = [
+                value
+                for value in (parse_numeric(row, field_name) for row in selected_rows)
+                if value is not None
+            ]
+            if numeric_values:
+                fallback_used = "battery_sample"
         representative_metrics[metric_name] = (
             percentile(numeric_values, 0.95) if metric_name.startswith("p95_") else mean_or_none(numeric_values)
         )
+        representative_metric_details[metric_name] = {
+            "field_name": field_name,
+            "source_event_types": sorted({str(row.get("event_type") or "") for row in selected_rows if row.get("event_type")}),
+            "source_metric_origins": sorted({str(row.get("metric_origin") or "") for row in selected_rows if row.get("metric_origin")}),
+            "measurement_families": sorted({str(row.get("measurement_family") or "") for row in selected_rows if row.get("measurement_family")}),
+            "fallback_used": fallback_used or None,
+        }
 
-    for field_name in ["rtt_ms", "jitter_ms", "packet_loss_pct", "throughput_mbps", "rsrp_dbm", "sinr_db"]:
+    for field_name in ["rtt_ms", "delay_ms", "jitter_ms", "packet_loss_pct", "throughput_mbps", "rsrp_dbm", "rsrq_db", "sinr_db"]:
         values = [parse_numeric(row, field_name) for row in evidence_rows]
         numeric_values = [value for value in values if value is not None]
         metric_summary_rows.append(
@@ -464,6 +662,8 @@ def summarize_normalized_run(normalized_run_dir: Path, analysis_root: Path) -> P
         "command_summary": command_summary,
         "telemetry_continuity": telemetry_rows,
         "representative_metrics": representative_metrics,
+        "representative_metric_details": representative_metric_details,
+        "sync": sync_summary,
         "notes": {
             "preferred_evidence_layers": preferred_evidence_layers,
             "ui_visualization_rows": evidence_counts.get("ui_visualization_only", 0),
@@ -485,6 +685,7 @@ def summarize_normalized_run(normalized_run_dir: Path, analysis_root: Path) -> P
         f"| Mean jitter (ms) | {format_metric(representative_metrics['mean_jitter_ms'])} |",
         f"| Mean packet loss (%) | {format_metric(representative_metrics['mean_packet_loss_pct'])} |",
         f"| Mean throughput (Mbps) | {format_metric(representative_metrics['mean_throughput_mbps'])} |",
+        f"| Mean RSRQ (dB) | {format_metric(representative_metrics['mean_rsrq_db'])} |",
         f"| Command ACK success rate | {format_metric(command_summary['success_rate'], scale=100.0, suffix='%')} |",
     ]
     (analysis_dir / "publication_table.md").write_text("\n".join(publication_table) + "\n", encoding="utf-8")
@@ -505,8 +706,23 @@ def compare_field_and_sim(field_summary_path: Path, sim_summary_path: Path, outp
     output_dir.mkdir(parents=True, exist_ok=True)
 
     rows = []
+    comparable_rows = []
     abs_errors = []
     abs_pct_errors = []
+    comparable_abs_errors = []
+    comparable_abs_pct_errors = []
+
+    def is_scientifically_comparable(metric: str, field_detail: dict[str, Any], sim_detail: dict[str, Any]) -> bool:
+        field_families = set(field_detail.get("measurement_families") or [])
+        sim_families = set(sim_detail.get("measurement_families") or [])
+        if not field_families or not sim_families:
+            return False
+        return (
+            metric in {"mean_rtt_ms", "p95_rtt_ms", "mean_rsrp_dbm", "mean_rsrq_db", "mean_sinr_db"}
+            and "field_modem" in field_families
+            and "sim_link_model" in sim_families
+        )
+
     for metric in COMPARISON_METRICS:
         field_value = field_summary["representative_metrics"].get(metric)
         sim_value = sim_summary["representative_metrics"].get(metric)
@@ -517,15 +733,25 @@ def compare_field_and_sim(field_summary_path: Path, sim_summary_path: Path, outp
         abs_errors.append(abs_error)
         if rel_error_pct is not None:
             abs_pct_errors.append(rel_error_pct)
-        rows.append(
-            {
-                "metric": metric,
-                "field_value": field_value,
-                "sim_value": sim_value,
-                "abs_error": abs_error,
-                "relative_error_pct": rel_error_pct,
-            }
-        )
+        field_detail = field_summary.get("representative_metric_details", {}).get(metric, {})
+        sim_detail = sim_summary.get("representative_metric_details", {}).get(metric, {})
+        comparable = is_scientifically_comparable(metric, field_detail, sim_detail)
+        row = {
+            "metric": metric,
+            "field_value": field_value,
+            "sim_value": sim_value,
+            "abs_error": abs_error,
+            "relative_error_pct": rel_error_pct,
+            "scientifically_comparable": comparable,
+            "field_measurement_families": ",".join(field_detail.get("measurement_families", [])),
+            "sim_measurement_families": ",".join(sim_detail.get("measurement_families", [])),
+        }
+        rows.append(row)
+        if comparable:
+            comparable_rows.append(row)
+            comparable_abs_errors.append(abs_error)
+            if rel_error_pct is not None:
+                comparable_abs_pct_errors.append(rel_error_pct)
 
     comparison = {
         "schema_name": "networkplanner_field_vs_sim_comparison",
@@ -543,24 +769,49 @@ def compare_field_and_sim(field_summary_path: Path, sim_summary_path: Path, outp
             "uav_count_match": field_summary.get("scenario", {}).get("uav_count") == sim_summary.get("scenario", {}).get("uav_count"),
         },
         "metric_rows": rows,
+        "comparable_metric_rows": comparable_rows,
+        "structural_metric_count": len(rows),
+        "comparable_metric_count": len(comparable_rows),
         "mean_abs_error": mean_or_none(abs_errors),
         "mean_abs_pct_error": mean_or_none(abs_pct_errors),
+        "comparable_mean_abs_error": mean_or_none(comparable_abs_errors),
+        "comparable_mean_abs_pct_error": mean_or_none(comparable_abs_pct_errors),
     }
 
     write_json(output_dir / "comparison_summary.json", comparison)
-    write_csv(output_dir / "comparison_metrics.csv", rows, ["metric", "field_value", "sim_value", "abs_error", "relative_error_pct"])
+    write_csv(
+        output_dir / "comparison_metrics.csv",
+        rows,
+        [
+            "metric",
+            "field_value",
+            "sim_value",
+            "abs_error",
+            "relative_error_pct",
+            "scientifically_comparable",
+            "field_measurement_families",
+            "sim_measurement_families",
+        ],
+    )
     markdown = [
-        "| Metric | Field | Sim | Abs. Error | Rel. Error (%) |",
-        "| --- | --- | --- | --- | --- |",
+        "| Metric | Field | Sim | Abs. Error | Rel. Error (%) | Comparable |",
+        "| --- | --- | --- | --- | --- | --- |",
     ]
     for row in rows:
         markdown.append(
             f"| {row['metric']} | {format_metric(row['field_value'])} | {format_metric(row['sim_value'])} | "
-            f"{format_metric(row['abs_error'])} | {format_metric(row['relative_error_pct'])} |"
+            f"{format_metric(row['abs_error'])} | {format_metric(row['relative_error_pct'])} | "
+            f"{'yes' if row['scientifically_comparable'] else 'no'} |"
         )
     markdown.append("")
     markdown.append(f"Mean absolute error: {format_metric(comparison['mean_abs_error'])}")
     markdown.append(f"Mean absolute percentage error: {format_metric(comparison['mean_abs_pct_error'])}")
+    markdown.append(
+        f"Comparable metric count: {comparison['comparable_metric_count']}"
+    )
+    markdown.append(
+        f"Comparable mean absolute error: {format_metric(comparison['comparable_mean_abs_error'])}"
+    )
     (output_dir / "comparison_table.md").write_text("\n".join(markdown) + "\n", encoding="utf-8")
     return output_dir
 

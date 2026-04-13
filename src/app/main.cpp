@@ -25,10 +25,10 @@
 #include "qcustomplot.h"
 #include "modem_decode.h"
 #include <QDir>
-#include "logging.h"
 #include "mavlink/mav_gcs_manager.h"
 #include "weather_service.h"
 #include "ns3_simulation_feed.h"
+#include "publication_logger.h"
 #include "video_stream_feed.h"
 
 int main(int argc, char *argv[])
@@ -43,6 +43,8 @@ int main(int argc, char *argv[])
     QApplication a(argc, argv);
     QGuiApplication::setDesktopFileName(QStringLiteral("NetworkPlannerGCS"));
 
+    PublicationLogger::instance().configure(PublicationLogger::defaultContext(QStringLiteral("gcs")));
+
 #ifdef QMAPLIBRE_PLUGIN_PATH
     QCoreApplication::addLibraryPath(QStringLiteral(QMAPLIBRE_PLUGIN_PATH));
 #endif
@@ -53,7 +55,6 @@ int main(int argc, char *argv[])
     udpgcs * udp= new udpgcs();
     modem_decode * huawei= new modem_decode ();
     CustomPlotItem * plot = new CustomPlotItem();
-    logging * log = new logging();
     QGimball *gimbal=new QGimball;
     WeatherService *weatherService = new WeatherService(&a);
     Ns3SimulationFeed *simulationFeed = new Ns3SimulationFeed(&a);
@@ -145,14 +146,6 @@ int main(int argc, char *argv[])
     QObject::connect(item,SIGNAL(newDdsArgumentsDJI(QVariant)),&dji,SLOT(init(QVariant)));
     QObject::connect(&dji,SIGNAL(connectionStatus(QVariant)),item,SLOT(connectionStatusUpdate(QVariant)));
     QObject::connect(mav_dec,SIGNAL(signalCoordinate(QVariant,QVariant)),item,SLOT(updateUavGPS(QVariant,QVariant)));
-    //--------Mavlink__Gauges----------//
-    QObject::connect(mav_dec,SIGNAL(attitudeyaw(float)),log,SLOT(writeInTheFileYaw(float)));
-    QObject::connect(mav_dec,SIGNAL(attitudepitch(float)),log,SLOT(writeInTheFilePitch(float)));
-    QObject::connect(mav_dec,SIGNAL(attituderoll(float)),log,SLOT(writeInTheFileRoll(float)));
-      QObject::connect(mav_dec,SIGNAL(gpsaltituderaw(double)),log,SLOT(writeInTheFileAltitude(double)));
-    QObject::connect(mav_dec,SIGNAL(gpslatituderaw(double)),log,SLOT(writeInTheFileGPSLat(double)));
-           QObject::connect(mav_dec,SIGNAL(gpslongtituderaw(double)),log,SLOT(writeInTheFileGPSLong(double)));
-   //////////////////
     QObject::connect(mav_dec, &Mavlink_Raw_Message::attitudeyaw, item,
                      [item](float yawRadians) {
         QMetaObject::invokeMethod(item, "updateFlightHeading",
@@ -206,6 +199,35 @@ int main(int argc, char *argv[])
                      [simulationFeed, mav_dec]() {
         const int selectedId = simulationFeed->selectedUavId();
         mav_dec->setTargetSystemId(selectedId >= 0 ? selectedId + 1 : 1);
+    });
+    QObject::connect(simulationFeed, &Ns3SimulationFeed::selectedUavChanged, &a,
+                     [simulationFeed]() {
+        QVariantMap fields;
+        const int selectedId = simulationFeed->selectedUavId();
+        fields.insert(QStringLiteral("uav_id"), selectedId >= 0 ? selectedId + 1 : 0);
+        fields.insert(QStringLiteral("status"), selectedId >= 0 ? QStringLiteral("selected")
+                                                                : QStringLiteral("cleared"));
+        if (selectedId >= 0) {
+            const QVariantMap selectedUav = simulationFeed->selectedUav();
+            if (selectedUav.contains(QStringLiteral("latitude"))) {
+                fields.insert(QStringLiteral("latitude"),
+                              selectedUav.value(QStringLiteral("latitude")).toDouble());
+            }
+            if (selectedUav.contains(QStringLiteral("longitude"))) {
+                fields.insert(QStringLiteral("longitude"),
+                              selectedUav.value(QStringLiteral("longitude")).toDouble());
+            }
+            if (selectedUav.contains(QStringLiteral("altitudeMeters"))) {
+                fields.insert(QStringLiteral("altitude_m"),
+                              selectedUav.value(QStringLiteral("altitudeMeters")).toDouble());
+            }
+            if (selectedUav.contains(QStringLiteral("label"))) {
+                fields.insert(QStringLiteral("note"),
+                              QStringLiteral("selected_uav=%1")
+                                  .arg(selectedUav.value(QStringLiteral("label")).toString()));
+            }
+        }
+        PublicationLogger::instance().logEvent(QStringLiteral("selection_context"), fields);
     });
     QObject::connect(simulationFeed, &Ns3SimulationFeed::selectedUavChanged, &a,
                      [item, simulationFeed]() {

@@ -30,3 +30,6 @@ These documents are implementation-facing.
 
 They describe the codebase, build flow, runtime wiring, and supported operational workflows that are intentionally kept with the public repository.
 
+For the paper-facing data model, experiment plan, and reproducibility package, see:
+
+- [Publication Docs](/home/boots/work/phd/GCSNetworkPlanner/docs/publication/README.md)

@@ -60,6 +60,7 @@ set(PROJECT_SOURCES
     src/core/file_writer.cpp
     src/core/logging.cpp
     src/core/ns3_simulation_feed.cpp
+    src/core/publication_logger.cpp
     src/core/video_stream_feed.cpp
     src/dji/djigcs.cpp
     src/dji/QonboardSDK.cpp

@@ -12,7 +12,10 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <cmath>
+#include <exception>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -70,6 +73,13 @@ struct LiveLinkMetrics
     double ssSinrDb;
 };
 
+struct LinkModelSample
+{
+    uint32_t uavId;
+    double simTimeSeconds;
+    LiveLinkMetrics metrics;
+};
+
 struct UavStatusSnapshot
 {
     std::string vehicleType;
@@ -92,6 +102,108 @@ double
 Clamp(double value, double minimum, double maximum)
 {
     return std::max(minimum, std::min(value, maximum));
+}
+
+double
+SampleStaticRadius(Ptr<UniformRandomVariable> uniform, double coverageRadiusMeters)
+{
+    const double minFraction = 0.15;
+    const double maxFraction = 0.95;
+    return coverageRadiusMeters * uniform->GetValue(minFraction, maxFraction);
+}
+
+Vector
+BuildOverlappedGridPosition(uint32_t index,
+                            uint32_t gridColumns,
+                            double nominalSpacingMeters,
+                            double overlapSpacingMinMeters,
+                            double overlapSpacingMaxMeters,
+                            double jitterMeters,
+                            double heightMeters,
+                            Ptr<UniformRandomVariable> uniform)
+{
+    const uint32_t row = index / gridColumns;
+    const uint32_t col = index % gridColumns;
+
+    double x = col * nominalSpacingMeters;
+    double y = row * nominalSpacingMeters;
+
+    if (col > 0 && (col % 2 == 1))
+    {
+        const double overlappedSpacing =
+            uniform->GetValue(overlapSpacingMinMeters, overlapSpacingMaxMeters);
+        x -= std::max(0.0, nominalSpacingMeters - overlappedSpacing);
+    }
+    if (row > 0 && (row % 2 == 1))
+    {
+        const double overlappedSpacing =
+            uniform->GetValue(overlapSpacingMinMeters, overlapSpacingMaxMeters);
+        y -= std::max(0.0, nominalSpacingMeters - overlappedSpacing);
+    }
+
+    x += uniform->GetValue(-jitterMeters, jitterMeters);
+    y += uniform->GetValue(-jitterMeters, jitterMeters);
+    return Vector(x, y, heightMeters);
+}
+
+std::string
+EnvString(const char* name, const std::string& fallback = {})
+{
+    const char* value = std::getenv(name);
+    return value != nullptr ? std::string(value) : fallback;
+}
+
+std::string
+SanitizeIdentifier(std::string value, const std::string& fallback)
+{
+    if (value.empty())
+    {
+        return fallback;
+    }
+
+    for (char& character : value)
+    {
+        const bool isValid = (character >= 'a' && character <= 'z')
+                             || (character >= 'A' && character <= 'Z')
+                             || (character >= '0' && character <= '9')
+                             || character == '-' || character == '_' || character == '.';
+        if (!isValid)
+        {
+            character = '-';
+        }
+    }
+
+    return value;
+}
+
+std::string
+CurrentUtcRunId()
+{
+    std::time_t now = std::time(nullptr);
+    std::tm utcNow{};
+    gmtime_r(&now, &utcNow);
+    std::ostringstream stream;
+    stream << std::put_time(&utcNow, "%Y%m%dT%H%M%SZ");
+    return stream.str();
+}
+
+bool
+TryParseDouble(const std::string& value, double* output)
+{
+    if (value.empty())
+    {
+        return false;
+    }
+
+    try
+    {
+        *output = std::stod(value);
+        return true;
+    }
+    catch (const std::exception&)
+    {
+        return false;
+    }
 }
 
 GeoCoordinate
@@ -319,8 +431,12 @@ class LivePublisher
                   uint16_t port,
                   const std::string& mirrorHost,
                   uint16_t mirrorPort,
+                  const std::string& scenarioId,
+                  const std::string& runId,
                   const SecurityProfile& security)
         : m_enabled(enabled)
+        , m_scenarioId(scenarioId)
+        , m_runId(runId)
         , m_security(security)
     {
         if (!m_enabled)
@@ -374,7 +490,11 @@ class LivePublisher
 
         std::ostringstream json;
         json << std::fixed << std::setprecision(7);
-        json << "{\"type\":\"snapshot\",\"rat\":\"" << rat << "\",\"simTime\":" << simTime
+        json << "{\"type\":\"snapshot\",\"scenarioId\":\"" << m_scenarioId
+             << "\",\"runId\":\"" << m_runId
+             << "\",\"source\":\"ns3_live_publisher\",\"metricOrigin\":\"snapshot_estimate\""
+             << ",\"evidenceLayer\":\"ui_visualization_only\",\"rat\":\"" << rat
+             << "\",\"simTime\":" << simTime
              << ",\"antennas\":[";
 
         for (uint32_t i = 0; i < antennas.GetN(); ++i)
@@ -472,6 +592,8 @@ class LivePublisher
     mutable bool m_enabled = false;
     mutable int m_socket = -1;
     mutable std::vector<sockaddr_in> m_destinations;
+    std::string m_scenarioId;
+    std::string m_runId;
     SecurityProfile m_security;
 };
 
@@ -505,6 +627,50 @@ ScheduleLiveSnapshot(LivePublisher* publisher,
                             antennaRangeMeters,
                             originLatitude,
                             originLongitude,
+                            motionStates,
+                            interval,
+                            stopTime);
+    }
+}
+
+void
+CaptureLinkModelSamples(std::vector<LinkModelSample>* samples,
+                        const std::string* rat,
+                        const NodeContainer* antennas,
+                        const NodeContainer* uavs,
+                        const SecurityProfile* security,
+                        const std::vector<UavMotionState>* motionStates,
+                        Time interval,
+                        Time stopTime)
+{
+    if (samples == nullptr || rat == nullptr || antennas == nullptr || uavs == nullptr
+        || security == nullptr)
+    {
+        return;
+    }
+
+    const double simTime = Simulator::Now().GetSeconds();
+    for (uint32_t i = 0; i < uavs->GetN(); ++i)
+    {
+        Vector position = uavs->Get(i)->GetObject<MobilityModel>()->GetPosition();
+        if (motionStates != nullptr && i < motionStates->size())
+        {
+            position = ComputeUavKinematics(motionStates->at(i), simTime).position;
+        }
+
+        samples->push_back(
+            {i + 1, simTime, EstimateLinkMetrics(*rat, i, simTime, position, *antennas, *security)});
+    }
+
+    if (Simulator::Now() + interval < stopTime)
+    {
+        Simulator::Schedule(interval,
+                            &CaptureLinkModelSamples,
+                            samples,
+                            rat,
+                            antennas,
+                            uavs,
+                            security,
                             motionStates,
                             interval,
                             stopTime);
@@ -563,10 +729,13 @@ FlowTypeForTuple(const Ipv4FlowClassifier::FiveTuple& tuple, uint16_t telemetryP
 
 void
 WriteCsvSummary(const std::string& path,
+                const std::string& scenarioId,
+                const std::string& runId,
                 const std::string& rat,
                 const SecurityProfile& security,
                 uint32_t uavs,
                 uint32_t baseStations,
+                double simTimeSeconds,
                 Ptr<Ipv4FlowClassifier> classifier,
                 const FlowMonitor::FlowStatsContainer& stats,
                 uint16_t telemetryPort)
@@ -574,8 +743,10 @@ WriteCsvSummary(const std::string& path,
     std::filesystem::create_directories(std::filesystem::path(path).parent_path());
 
     std::ofstream csv(path, std::ios::out | std::ios::trunc);
-    csv << "rat,security,uavs,base_stations,flow_id,flow_type,src_ip,dst_ip,src_port,dst_port,"
-           "tx_packets,rx_packets,lost_packets,pdr,throughput_mbps,mean_delay_ms,mean_jitter_ms\n";
+    csv << "scenario_id,run_id,source,evidence_layer,metric_origin,rat,security_profile,uavs,"
+           "base_stations,sim_time_s,security_overhead_bytes,security_setup_delay_s,flow_id,"
+           "flow_type,src_ip,dst_ip,src_port,dst_port,tx_packets,rx_packets,lost_packets,pdr,"
+           "throughput_mbps,mean_delay_ms,mean_jitter_ms\n";
 
     double totalThroughput = 0.0;
     double totalDelay = 0.0;
@@ -596,8 +767,11 @@ WriteCsvSummary(const std::string& path,
         const double pdr = stat.txPackets > 0 ? static_cast<double>(stat.rxPackets) / stat.txPackets
                                               : 0.0;
 
-        csv << rat << ',' << security.name << ',' << uavs << ',' << baseStations << ',' << flowId
-            << ',' << flowType << ',' << tuple.sourceAddress << ',' << tuple.destinationAddress
+        csv << scenarioId << ',' << runId << ",ns3_export,simulator_export,flow_monitor,"
+            << rat << ',' << security.name << ',' << uavs << ',' << baseStations << ','
+            << simTimeSeconds << ',' << security.overheadBytes << ','
+            << security.setupDelaySeconds << ',' << flowId << ',' << flowType << ','
+            << tuple.sourceAddress << ',' << tuple.destinationAddress
             << ',' << tuple.sourcePort << ',' << tuple.destinationPort << ',' << stat.txPackets
             << ',' << stat.rxPackets << ',' << stat.lostPackets << ',' << std::fixed
             << std::setprecision(6) << pdr << ',' << throughputMbps << ',' << meanDelayMs << ','
@@ -621,6 +795,132 @@ WriteCsvSummary(const std::string& path,
                   << "Average delay ms: " << totalDelay / measuredFlows << '\n'
                   << "Average jitter ms: " << totalJitter / measuredFlows << '\n';
     }
+}
+
+void
+WriteLinkModelCsv(const std::string& path,
+                  const std::string& scenarioId,
+                  const std::string& runId,
+                  const std::string& rat,
+                  const SecurityProfile& security,
+                  uint32_t uavs,
+                  uint32_t baseStations,
+                  const std::vector<LinkModelSample>& samples)
+{
+    std::filesystem::create_directories(std::filesystem::path(path).parent_path());
+
+    std::ofstream csv(path, std::ios::out | std::ios::trunc);
+    csv << "scenario_id,run_id,source,evidence_layer,metric_origin,measurement_family,rat,"
+           "security_profile,uavs,base_stations,sim_time_s,security_overhead_bytes,"
+           "security_setup_delay_s,uav_id,network_type,quality,serving_label,ping_ms,"
+           "jitter_ms,packet_loss_pct,throughput_mbps,rssi_dbm,rsrp_dbm,rsrq_db,sinr_db\n";
+
+    for (const auto& sample : samples)
+    {
+        csv << scenarioId << ',' << runId
+            << ",ns3_export,simulator_export,link_model,sim_link_model," << rat << ','
+            << security.name << ',' << uavs << ',' << baseStations << ',' << std::fixed
+            << std::setprecision(6) << sample.simTimeSeconds << ',' << security.overheadBytes
+            << ',' << security.setupDelaySeconds << ',' << sample.uavId << ','
+            << sample.metrics.networkType << ',' << sample.metrics.quality << ','
+            << sample.metrics.servingLabel << ',' << sample.metrics.pingMs << ','
+            << sample.metrics.jitterMs << ',' << sample.metrics.packetLossPct << ','
+            << sample.metrics.throughputMbps << ',' << sample.metrics.rssiDbm << ','
+            << sample.metrics.rsrpDbm << ',' << sample.metrics.rsrqDb << ','
+            << sample.metrics.sinrDb << '\n';
+    }
+}
+
+void
+WriteNodePositionsJson(std::ostream& stream, const char* key, const NodeContainer& nodes)
+{
+    stream << "  \"" << key << "\": [\n";
+    for (uint32_t i = 0; i < nodes.GetN(); ++i)
+    {
+        Ptr<MobilityModel> mobilityModel = nodes.Get(i)->GetObject<MobilityModel>();
+        Vector position = mobilityModel != nullptr ? mobilityModel->GetPosition() : Vector();
+        stream << "    {\"node_index\": " << i << ", \"x_m\": " << position.x
+               << ", \"y_m\": " << position.y << ", \"z_m\": " << position.z << "}";
+        if (i + 1 != nodes.GetN())
+        {
+            stream << ',';
+        }
+        stream << '\n';
+    }
+    stream << "  ],\n";
+}
+
+void
+WriteRunMetadata(const std::string& path,
+                 const std::string& scenarioId,
+                 const std::string& runId,
+                 const std::string& rat,
+                 const SecurityProfile& security,
+                 uint32_t uavs,
+                 uint32_t baseStations,
+                 double simTimeSeconds,
+                 uint32_t rngRun,
+                 const std::string& baseStationLayoutMode,
+                 double baseStationNominalSpacingMeters,
+                 double baseStationJitterMeters,
+                 double baseStationOverlapSpacingMinMeters,
+                 double baseStationOverlapSpacingMaxMeters,
+                 const NodeContainer& baseStationsNodes,
+                 const std::string& csvPath,
+                 const std::string& linkModelCsvPath,
+                 const std::string& syncMethod,
+                 bool hasSyncOffset,
+                 double syncOffsetMs,
+                 const std::string& syncNote)
+{
+    std::filesystem::create_directories(std::filesystem::path(path).parent_path());
+
+    std::ofstream metadata(path, std::ios::out | std::ios::trunc);
+    metadata << "{\n"
+             << "  \"schema_name\": \"networkplanner_sim_export\",\n"
+             << "  \"schema_version\": 1,\n"
+             << "  \"scenario_id\": \"" << scenarioId << "\",\n"
+             << "  \"run_id\": \"" << runId << "\",\n"
+             << "  \"source\": \"ns3_export\",\n"
+             << "  \"rat\": \"" << rat << "\",\n"
+             << "  \"security_profile\": \"" << security.name << "\",\n"
+             << "  \"uav_count\": " << uavs << ",\n"
+             << "  \"base_station_count\": " << baseStations << ",\n"
+             << "  \"sim_time_s\": " << simTimeSeconds << ",\n"
+             << "  \"rng_run\": " << rngRun << ",\n"
+             << "  \"base_station_layout_mode\": \"" << baseStationLayoutMode << "\",\n"
+             << "  \"base_station_nominal_spacing_m\": " << baseStationNominalSpacingMeters
+             << ",\n"
+             << "  \"base_station_jitter_m\": " << baseStationJitterMeters << ",\n"
+             << "  \"base_station_overlap_spacing_min_m\": "
+             << baseStationOverlapSpacingMinMeters << ",\n"
+             << "  \"base_station_overlap_spacing_max_m\": "
+             << baseStationOverlapSpacingMaxMeters << ",\n"
+             << "  \"security_overhead_bytes\": " << security.overheadBytes << ",\n"
+             << "  \"security_setup_delay_s\": " << security.setupDelaySeconds << ",\n"
+             << "  \"flow_monitor_csv\": \"" << csvPath << "\",\n"
+             << "  \"flow_monitor_metric_origin\": \"flow_monitor\",\n"
+             << "  \"flow_monitor_evidence_layer\": \"simulator_export\",\n"
+             << "  \"flow_monitor_measurement_family\": \"sim_flow_performance\",\n"
+             << "  \"link_model_csv\": \"" << linkModelCsvPath << "\",\n"
+             << "  \"link_model_metric_origin\": \"link_model\",\n"
+             << "  \"link_model_evidence_layer\": \"simulator_export\",\n"
+             << "  \"link_model_measurement_family\": \"sim_link_model\",\n"
+             << "  \"live_snapshot_metric_origin\": \"snapshot_estimate\",\n"
+             << "  \"live_snapshot_evidence_layer\": \"ui_visualization_only\",\n"
+             << "  \"sync_method\": \"" << syncMethod << "\",\n";
+    WriteNodePositionsJson(metadata, "base_station_positions_m", baseStationsNodes);
+    if (hasSyncOffset)
+    {
+        metadata << "  \"sync_offset_ms\": " << syncOffsetMs << ",\n";
+    }
+    if (!syncNote.empty())
+    {
+        metadata << "  \"sync_note\": \"" << syncNote << "\",\n";
+    }
+    metadata << "  \"security_model_note\": "
+             << "\"Security overlay models transport overhead and session setup delay, not end-host cryptographic compute cost.\"\n"
+             << "}\n";
 }
 
 } // namespace
@@ -654,7 +954,25 @@ main(int argc, char* argv[])
     double mobilityRadiusMeters = 80.0;
     double originLatitude = 39.904459;
     double originLongitude = 116.406847;
-    std::string csvPath = "sim/ns3/results/uav-secure-lte.csv";
+    std::string scenarioId =
+        SanitizeIdentifier(EnvString("NP_SCENARIO_ID", "unspecified-scenario"), "unspecified-scenario");
+    std::string runId = SanitizeIdentifier(EnvString("NP_RUN_ID", CurrentUtcRunId()), CurrentUtcRunId());
+    std::string logRoot = EnvString("NP_LOG_ROOT", "logs");
+    std::string syncMethod = EnvString("NP_SYNC_METHOD", "unspecified");
+    std::string syncNote = EnvString("NP_SYNC_NOTE");
+    std::string syncOffsetArg = EnvString("NP_SYNC_OFFSET_MS");
+    uint32_t rngRun = 1;
+    try
+    {
+        rngRun = static_cast<uint32_t>(std::stoul(EnvString("NP_RNG_RUN", "1")));
+    }
+    catch (const std::exception&)
+    {
+        rngRun = 1;
+    }
+    std::string csvPath;
+    std::string linkModelCsvPath;
+    std::string metadataPath;
 
     CommandLine cmd(__FILE__);
     cmd.AddValue("uavs", "Number of UAV endpoints", uavs);
@@ -695,11 +1013,39 @@ main(int argc, char* argv[])
                  mobilityRadiusMeters);
     cmd.AddValue("originLat", "GPS origin latitude for projected positions", originLatitude);
     cmd.AddValue("originLon", "GPS origin longitude for projected positions", originLongitude);
+    cmd.AddValue("scenarioId", "Scenario identifier for publication-grade exports", scenarioId);
+    cmd.AddValue("runId", "Run identifier for publication-grade exports", runId);
+    cmd.AddValue("logRoot", "Root directory for logs/raw and derived outputs", logRoot);
+    cmd.AddValue("syncMethod", "Clock synchronization method description", syncMethod);
+    cmd.AddValue("syncOffsetMs", "Optional clock offset estimate in milliseconds", syncOffsetArg);
+    cmd.AddValue("syncNote", "Optional synchronization note", syncNote);
     cmd.AddValue("csv", "CSV output path", csvPath);
+    cmd.AddValue("linkModelCsv", "Link-model CSV output path", linkModelCsvPath);
+    cmd.AddValue("metadata", "Run metadata JSON output path", metadataPath);
     cmd.Parse(argc, argv);
+
+    scenarioId = SanitizeIdentifier(scenarioId, "unspecified-scenario");
+    runId = SanitizeIdentifier(runId, CurrentUtcRunId());
+    const std::filesystem::path runDirectory =
+        std::filesystem::path(logRoot) / "raw" / scenarioId / runId;
+    if (csvPath.empty())
+    {
+        csvPath = (runDirectory / "ns3_lte_flow_monitor.csv").string();
+    }
+    if (linkModelCsvPath.empty())
+    {
+        linkModelCsvPath = (runDirectory / "ns3_lte_link_model.csv").string();
+    }
+    if (metadataPath.empty())
+    {
+        metadataPath = (runDirectory / "ns3_lte_metadata.json").string();
+    }
+    double syncOffsetMs = 0.0;
+    const bool hasSyncOffset = TryParseDouble(syncOffsetArg, &syncOffsetMs);
 
     const SecurityProfile security =
         ResolveSecurityProfile(securityName, securityOverheadBytes, securitySetupDelaySeconds);
+    const std::string rat = "lte";
 
     if (live != 0)
     {
@@ -744,12 +1090,21 @@ main(int argc, char* argv[])
     ueNodes.Create(uavs);
 
     Ptr<ListPositionAllocator> enbPositions = CreateObject<ListPositionAllocator>();
+    Ptr<UniformRandomVariable> bsLayoutRv = CreateObject<UniformRandomVariable>();
     const uint32_t gridColumns = std::ceil(std::sqrt(static_cast<double>(baseStations)));
+    const double baseStationJitterMeters = interSiteDistanceMeters * 0.12;
+    const double baseStationOverlapSpacingMinMeters = coverageRadiusMeters * 1.4;
+    const double baseStationOverlapSpacingMaxMeters = coverageRadiusMeters * 1.8;
     for (uint32_t i = 0; i < baseStations; ++i)
     {
-        const uint32_t row = i / gridColumns;
-        const uint32_t col = i % gridColumns;
-        enbPositions->Add(Vector(col * interSiteDistanceMeters, row * interSiteDistanceMeters, 30.0));
+        enbPositions->Add(BuildOverlappedGridPosition(i,
+                                                      gridColumns,
+                                                      interSiteDistanceMeters,
+                                                      baseStationOverlapSpacingMinMeters,
+                                                      baseStationOverlapSpacingMaxMeters,
+                                                      baseStationJitterMeters,
+                                                      30.0,
+                                                      bsLayoutRv));
     }
 
     MobilityHelper enbMobility;
@@ -758,13 +1113,14 @@ main(int argc, char* argv[])
     enbMobility.Install(enbNodes);
 
     Ptr<ListPositionAllocator> uePositions = CreateObject<ListPositionAllocator>();
+    Ptr<UniformRandomVariable> angleRv = CreateObject<UniformRandomVariable>();
+    Ptr<UniformRandomVariable> radiusRv = CreateObject<UniformRandomVariable>();
     for (uint32_t i = 0; i < uavs; ++i)
     {
         const uint32_t servingCell = i % baseStations;
         const Vector anchor = enbNodes.Get(servingCell)->GetObject<MobilityModel>()->GetPosition();
-        const double angle = std::fmod(i * 137.50776405003785, 360.0) * M_PI / 180.0;
-        const double radialFraction = ((i / baseStations) + 1.0) / ((uavs / baseStations) + 2.0);
-        const double radius = std::min(coverageRadiusMeters, coverageRadiusMeters * radialFraction);
+        const double angle = angleRv->GetValue(0.0, 2.0 * M_PI);
+        const double radius = SampleStaticRadius(radiusRv, coverageRadiusMeters);
         uePositions->Add(Vector(anchor.x + radius * std::cos(angle),
                                 anchor.y + radius * std::sin(angle),
                                 altitudeMeters));
@@ -853,7 +1209,26 @@ main(int argc, char* argv[])
     monitor->SetAttribute("JitterBinWidth", DoubleValue(0.001));
     monitor->SetAttribute("PacketSizeBinWidth", DoubleValue(32));
 
-    LivePublisher livePublisher(live != 0, liveHost, livePort, liveMirrorHost, liveMirrorPort, security);
+    LivePublisher livePublisher(live != 0,
+                                liveHost,
+                                livePort,
+                                liveMirrorHost,
+                                liveMirrorPort,
+                                scenarioId,
+                                runId,
+                                security);
+    std::vector<LinkModelSample> linkModelSamples;
+    const Time linkModelInterval = MilliSeconds(liveIntervalMs);
+    Simulator::Schedule(clientStart,
+                        &CaptureLinkModelSamples,
+                        &linkModelSamples,
+                        &rat,
+                        &enbNodes,
+                        &ueNodes,
+                        &security,
+                        mobility != 0 ? &motionStates : nullptr,
+                        linkModelInterval,
+                        stopTime);
     if (live != 0)
     {
         const Time liveInterval = MilliSeconds(liveIntervalMs);
@@ -877,13 +1252,45 @@ main(int argc, char* argv[])
     Ptr<Ipv4FlowClassifier> classifier =
         DynamicCast<Ipv4FlowClassifier>(flowmonHelper.GetClassifier());
     WriteCsvSummary(csvPath,
-                    "lte",
+                    scenarioId,
+                    runId,
+                    rat,
                     security,
                     uavs,
                     baseStations,
+                    simTimeSeconds,
                     classifier,
                     monitor->GetFlowStats(),
                     telemetryPort);
+    WriteLinkModelCsv(linkModelCsvPath,
+                      scenarioId,
+                      runId,
+                      rat,
+                      security,
+                      uavs,
+                      baseStations,
+                      linkModelSamples);
+    WriteRunMetadata(metadataPath,
+                     scenarioId,
+                     runId,
+                     rat,
+                     security,
+                     uavs,
+                     baseStations,
+                     simTimeSeconds,
+                     rngRun,
+                     "seeded_overlapped_grid",
+                     interSiteDistanceMeters,
+                     baseStationJitterMeters,
+                     baseStationOverlapSpacingMinMeters,
+                     baseStationOverlapSpacingMaxMeters,
+                     enbNodes,
+                     csvPath,
+                     linkModelCsvPath,
+                     syncMethod,
+                     hasSyncOffset,
+                     syncOffsetMs,
+                     syncNote);
 
     Simulator::Destroy();
     return 0;

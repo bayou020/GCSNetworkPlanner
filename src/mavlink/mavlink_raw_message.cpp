@@ -1,9 +1,80 @@
 #include "mavlink_raw_message.h"
 #include "QtMath"
+#include "publication_logger.h"
 #include "qtsdljoystick.h"
 #include <QDateTime>
 #include <QVariant>
 #include <cstring>
+
+namespace
+{
+
+QString mavMessageName(uint32_t msgId)
+{
+    switch (msgId)
+    {
+    case MAVLINK_MSG_ID_HEARTBEAT:
+        return QStringLiteral("HEARTBEAT");
+    case MAVLINK_MSG_ID_SYS_STATUS:
+        return QStringLiteral("SYS_STATUS");
+    case MAVLINK_MSG_ID_GLOBAL_POSITION_INT:
+        return QStringLiteral("GLOBAL_POSITION_INT");
+    case MAVLINK_MSG_ID_GPS_RAW_INT:
+        return QStringLiteral("GPS_RAW_INT");
+    case MAVLINK_MSG_ID_ATTITUDE:
+        return QStringLiteral("ATTITUDE");
+    case MAVLINK_MSG_ID_COMMAND_ACK:
+        return QStringLiteral("COMMAND_ACK");
+    case MAVLINK_MSG_ID_COMMAND_LONG:
+        return QStringLiteral("COMMAND_LONG");
+    case MAVLINK_MSG_ID_SET_MODE:
+        return QStringLiteral("SET_MODE");
+    case MAVLINK_MSG_ID_MANUAL_CONTROL:
+        return QStringLiteral("MANUAL_CONTROL");
+    default:
+        return QStringLiteral("MAVLINK_%1").arg(msgId);
+    }
+}
+
+QString mavCommandName(uint16_t command)
+{
+    switch (command)
+    {
+    case MAV_CMD_COMPONENT_ARM_DISARM:
+        return QStringLiteral("arm_disarm");
+    case MAV_CMD_NAV_TAKEOFF:
+        return QStringLiteral("takeoff");
+    case MAV_CMD_NAV_LAND:
+        return QStringLiteral("land");
+    case MAV_CMD_NAV_RETURN_TO_LAUNCH:
+        return QStringLiteral("return_to_launch");
+    case MAV_CMD_DO_SET_MODE:
+        return QStringLiteral("set_mode");
+    default:
+        return QStringLiteral("mav_cmd_%1").arg(command);
+    }
+}
+
+QString mavResultName(uint8_t result)
+{
+    switch (result)
+    {
+    case MAV_RESULT_ACCEPTED:
+        return QStringLiteral("accepted");
+    case MAV_RESULT_TEMPORARILY_REJECTED:
+        return QStringLiteral("temporarily_rejected");
+    case MAV_RESULT_DENIED:
+        return QStringLiteral("denied");
+    case MAV_RESULT_UNSUPPORTED:
+        return QStringLiteral("unsupported");
+    case MAV_RESULT_FAILED:
+        return QStringLiteral("failed");
+    default:
+        return QStringLiteral("result_%1").arg(result);
+    }
+}
+
+} // namespace
 
 
 
@@ -117,6 +188,30 @@ void Mavlink_Raw_Message::decode_command_long(mavlink_message_t message)
 {
     mavlink_command_ack_t cmd_ack_t;
     mavlink_msg_command_ack_decode(&message, &cmd_ack_t);
+    const int ackSystemId = cmd_ack_t.target_system > 0 ? cmd_ack_t.target_system : targetSystemId;
+    PendingCommand pending = takePendingCommand(ackSystemId, cmd_ack_t.command);
+
+    QVariantMap ackFields;
+    ackFields.insert(QStringLiteral("uav_id"), ackSystemId);
+    ackFields.insert(QStringLiteral("sequence_id"), static_cast<qulonglong>(message.seq));
+    ackFields.insert(QStringLiteral("command_code"), cmd_ack_t.command);
+    ackFields.insert(QStringLiteral("command_name"),
+                     pending.commandName.isEmpty() ? mavCommandName(cmd_ack_t.command)
+                                                   : pending.commandName);
+    ackFields.insert(QStringLiteral("status"), mavResultName(cmd_ack_t.result));
+    ackFields.insert(QStringLiteral("result_code"), cmd_ack_t.result);
+    ackFields.insert(QStringLiteral("message_name"), mavMessageName(message.msgid));
+    if (!pending.commandId.isEmpty())
+    {
+        ackFields.insert(QStringLiteral("command_id"), pending.commandId);
+        ackFields.insert(QStringLiteral("rtt_ms"),
+                         PublicationLogger::instance().monotonicMs() - pending.sentAtMs);
+    }
+    else
+    {
+        ackFields.insert(QStringLiteral("note"), QStringLiteral("unmatched_ack"));
+    }
+    PublicationLogger::instance().logEvent(QStringLiteral("command_ack"), ackFields);
 
     switch (cmd_ack_t.command)
     {
@@ -301,7 +396,10 @@ void Mavlink_Raw_Message::dds_mavlink_decode(QByteArray array)
 
         if (lastStatus.packet_rx_drop_count != status.packet_rx_drop_count)
         {
-            // printf("ERROR: DROPPED %d PACKETS! \n", status.packet_rx_drop_count);
+            PublicationLogger::instance().logError(
+                QStringLiteral("mavlink_parser_drop_count_incremented"),
+                {{QStringLiteral("dropped_packets"),
+                  static_cast<int>(status.packet_rx_drop_count - lastStatus.packet_rx_drop_count)}});
         }
         lastStatus = status;
         if(msgReceived)
@@ -419,6 +517,12 @@ void Mavlink_Raw_Message::arm()
     arm_command_msg.confirmation = 0;
     arm_command_msg.param1 = 1;
     mavlink_msg_command_long_encode(1, 0, &message_2d, &arm_command_msg);
+    logDiscreteCommandTx(MAV_CMD_COMPONENT_ARM_DISARM,
+                         QStringLiteral("arm"),
+                         message_2d,
+                         {{QStringLiteral("uav_id"), targetSystemId},
+                          {QStringLiteral("status"), QStringLiteral("sent")},
+                          {QStringLiteral("param1"), arm_command_msg.param1}});
     dds_mavlink_encode(message_2d);
     qDebug()<<"clicked arm";
       parameter_shrinker();
@@ -440,6 +544,12 @@ void Mavlink_Raw_Message::disarm()
     arm_command_msg.confirmation = 0;
     arm_command_msg.param1 = 0;
     mavlink_msg_command_long_encode(1, 0, &message_2d, &arm_command_msg);
+    logDiscreteCommandTx(MAV_CMD_COMPONENT_ARM_DISARM,
+                         QStringLiteral("disarm"),
+                         message_2d,
+                         {{QStringLiteral("uav_id"), targetSystemId},
+                          {QStringLiteral("status"), QStringLiteral("sent")},
+                          {QStringLiteral("param1"), arm_command_msg.param1}});
     dds_mavlink_encode(message_2d);
 
 }
@@ -455,6 +565,12 @@ void Mavlink_Raw_Message::takeoff()
     arm_command_msg.param4 = 2;
     arm_command_msg.param7=30;
     mavlink_msg_command_long_encode(1, 0, &message_2d, &arm_command_msg);
+    logDiscreteCommandTx(MAV_CMD_NAV_TAKEOFF,
+                         QStringLiteral("takeoff"),
+                         message_2d,
+                         {{QStringLiteral("uav_id"), targetSystemId},
+                          {QStringLiteral("status"), QStringLiteral("sent")},
+                          {QStringLiteral("param7"), arm_command_msg.param7}});
     dds_mavlink_encode(message_2d);
 
 }
@@ -470,6 +586,11 @@ void Mavlink_Raw_Message::land()
     land_command_msg.target_component = 1;
     land_command_msg.confirmation = 0;
     mavlink_msg_command_long_encode(1, 0, &message_2d, &land_command_msg);
+    logDiscreteCommandTx(MAV_CMD_NAV_LAND,
+                         QStringLiteral("land"),
+                         message_2d,
+                         {{QStringLiteral("uav_id"), targetSystemId},
+                          {QStringLiteral("status"), QStringLiteral("sent")}});
     dds_mavlink_encode(message_2d);
 }
 
@@ -483,6 +604,11 @@ void Mavlink_Raw_Message::returntolaunch()
     arm_command_msg.target_component = 1;
     arm_command_msg.confirmation = 0;
     mavlink_msg_command_long_encode(1, 0, &message_2d, &arm_command_msg);
+    logDiscreteCommandTx(MAV_CMD_NAV_RETURN_TO_LAUNCH,
+                         QStringLiteral("return_to_launch"),
+                         message_2d,
+                         {{QStringLiteral("uav_id"), targetSystemId},
+                          {QStringLiteral("status"), QStringLiteral("sent")}});
     dds_mavlink_encode(message_2d);
 
 
@@ -510,6 +636,13 @@ void Mavlink_Raw_Message::setMode(int baseMode, int customMode)
     set.base_mode=baseMode;
     set.custom_mode=customMode;
     mavlink_msg_set_mode_encode(1,0,&message_2d,&set);
+    logDiscreteCommandTx(MAV_CMD_DO_SET_MODE,
+                         QStringLiteral("set_mode"),
+                         message_2d,
+                         {{QStringLiteral("uav_id"), targetSystemId},
+                          {QStringLiteral("status"), QStringLiteral("sent")},
+                          {QStringLiteral("base_mode"), baseMode},
+                          {QStringLiteral("custom_mode"), static_cast<qulonglong>(customMode)}});
     dds_mavlink_encode(message_2d);
     // mavlink_msg_command_long_pack(255,1,&message_2d,71,67,MAV_CMD_DO_MOUNT_CONTROL,0,200,100,100,0,0,0,0);
 
@@ -678,6 +811,21 @@ void Mavlink_Raw_Message::mavlink_joystick()
     manual.z=-_throttle;
     manual.target = targetSystemId;
     mavlink_msg_manual_control_encode(1, 0, &message_2d, &manual);
+    const int manualRoll = static_cast<int>(manual.y);
+    const int manualPitch = static_cast<int>(manual.x);
+    const int manualYaw = static_cast<int>(manual.r);
+    const int manualThrottle = static_cast<int>(manual.z);
+    PublicationLogger::instance().logEvent(
+        QStringLiteral("command_tx"),
+        {{QStringLiteral("uav_id"), targetSystemId},
+         {QStringLiteral("sequence_id"), static_cast<qulonglong>(message_2d.seq)},
+         {QStringLiteral("command_name"), QStringLiteral("manual_control")},
+         {QStringLiteral("message_name"), mavMessageName(message_2d.msgid)},
+         {QStringLiteral("status"), QStringLiteral("sent")},
+         {QStringLiteral("roll"), manualRoll},
+         {QStringLiteral("pitch"), manualPitch},
+         {QStringLiteral("yaw"), manualYaw},
+         {QStringLiteral("throttle"), manualThrottle}});
     dds_mavlink_encode(message_2d);
     mavlink_msg_manual_control_decode(&message_2d, &manual);
     //    qDebug()<<"throttle real value" <<manual.z;
@@ -762,6 +910,11 @@ void Mavlink_Raw_Message::heartbeat_values(mavlink_message_t message_2d)
 {
     mavlink_heartbeat_t heartbeat;
     mavlink_msg_heartbeat_decode(&message_2d, &heartbeat);
+    logTelemetryEvent(QStringLiteral("telemetry_rx"),
+                      message_2d,
+                      {{QStringLiteral("uav_id"), message_2d.sysid},
+                       {QStringLiteral("vehicle_type"), vehicleTypeString(heartbeat.type)},
+                       {QStringLiteral("status"), systemStatusString(heartbeat.system_status)}});
     setVehicleStateValue(message_2d.sysid, "vehicleType", vehicleTypeString(heartbeat.type));
     setVehicleStateValue(message_2d.sysid, "systemStatus", systemStatusString(heartbeat.system_status));
     setVehicleStateValue(message_2d.sysid, "systemId", message_2d.sysid);
@@ -775,6 +928,16 @@ void Mavlink_Raw_Message::sys_values(mavlink_message_t message_2d)
 {
     mavlink_sys_status_t sys_status;
     mavlink_msg_sys_status_decode(&message_2d, &sys_status);
+    PublicationLogger::instance().logEvent(
+        QStringLiteral("battery_sample"),
+        {{QStringLiteral("uav_id"), message_2d.sysid},
+         {QStringLiteral("sequence_id"), static_cast<qulonglong>(message_2d.seq)},
+         {QStringLiteral("message_name"), mavMessageName(message_2d.msgid)},
+         {QStringLiteral("battery_voltage"), sys_status.voltage_battery / 1.0e3},
+         {QStringLiteral("battery_percentage"), sys_status.battery_remaining},
+         {QStringLiteral("battery_current_milliamps"), sys_status.current_battery * 10.0},
+         {QStringLiteral("packet_loss_pct"), sys_status.drop_rate_comm / 100.0},
+         {QStringLiteral("status"), QStringLiteral("received")}});
     setVehicleStateValue(message_2d.sysid, "batteryVoltage", sys_status.voltage_battery / 1.0e3);
     setVehicleStateValue(message_2d.sysid, "batteryPercentage", sys_status.battery_remaining);
     setVehicleStateValue(message_2d.sysid, "batteryCurrentMilliAmps", sys_status.current_battery * 10.0);
@@ -792,6 +955,13 @@ void Mavlink_Raw_Message::gps_int_values(mavlink_message_t message_2d)
 
     mavlink_global_position_int_t packet;
     mavlink_msg_global_position_int_decode(&message_2d, &packet);
+    logTelemetryEvent(QStringLiteral("telemetry_rx"),
+                      message_2d,
+                      {{QStringLiteral("uav_id"), message_2d.sysid},
+                       {QStringLiteral("latitude"), packet.lat / 10.0e6},
+                       {QStringLiteral("longitude"), packet.lon / 10.0e6},
+                       {QStringLiteral("altitude_m"), packet.alt / 1.0e3},
+                       {QStringLiteral("status"), QStringLiteral("received")}});
     QString raw_msg ;
     //GUI_signals
     emit guigpslatitudeint(raw_msg.setNum(packet.lat/10.0e6,'g',12));
@@ -817,6 +987,14 @@ void Mavlink_Raw_Message::gps_raw_values(mavlink_message_t message_2d)
 
     mavlink_gps_raw_int_t packet;
     mavlink_msg_gps_raw_int_decode(&message_2d, &packet);
+    logTelemetryEvent(QStringLiteral("telemetry_rx"),
+                      message_2d,
+                      {{QStringLiteral("uav_id"), message_2d.sysid},
+                       {QStringLiteral("latitude"), packet.lat / 10.0e6},
+                       {QStringLiteral("longitude"), packet.lon / 10.0e6},
+                       {QStringLiteral("altitude_m"), packet.alt / 1.0e3},
+                       {QStringLiteral("fix_type"), packet.fix_type},
+                       {QStringLiteral("status"), QStringLiteral("received")}});
 
     //GUI_signals
     emit guigpslatituderaw(raw_msg.setNum(packet.lat/10.0e6,'g',12));
@@ -850,6 +1028,13 @@ void Mavlink_Raw_Message::attitude_values(mavlink_message_t message_2d)
     mavlink_msg_attitude_decode(&message_2d, &attitude);
     QString raw_msg;
     const double normalizedYaw = attitude.yaw < 0 ? attitude.yaw + 2 * M_PI : attitude.yaw;
+    logTelemetryEvent(QStringLiteral("telemetry_rx"),
+                      message_2d,
+                      {{QStringLiteral("uav_id"), message_2d.sysid},
+                       {QStringLiteral("yaw_radians"), normalizedYaw},
+                       {QStringLiteral("pitch_radians"), attitude.pitch},
+                       {QStringLiteral("roll_radians"), attitude.roll},
+                       {QStringLiteral("status"), QStringLiteral("received")}});
 
     setVehicleStateValue(message_2d.sysid, "yawRadians", normalizedYaw);
     setVehicleStateValue(message_2d.sysid, "pitchRadians", attitude.pitch);
@@ -937,6 +1122,64 @@ void Mavlink_Raw_Message::setVehicleStateValue(int systemId, const QString &key,
     QVariantMap state = vehicleStates.value(systemId);
     state.insert(key, value);
     vehicleStates.insert(systemId, state);
+}
+
+void Mavlink_Raw_Message::logDiscreteCommandTx(int ackCommand,
+                                               const QString &commandName,
+                                               const mavlink_message_t &message,
+                                               const QVariantMap &fields)
+{
+    PendingCommand pending;
+    pending.commandId = PublicationLogger::instance().nextCommandId(QStringLiteral("command"));
+    pending.commandName = commandName;
+    pending.sentAtMs = PublicationLogger::instance().monotonicMs();
+    pending.sequenceId = message.seq;
+    pendingCommands[pendingCommandKey(targetSystemId, ackCommand)].append(pending);
+
+    QVariantMap eventFields = fields;
+    eventFields.insert(QStringLiteral("sequence_id"), static_cast<qulonglong>(message.seq));
+    eventFields.insert(QStringLiteral("command_id"), pending.commandId);
+    eventFields.insert(QStringLiteral("command_name"), commandName);
+    eventFields.insert(QStringLiteral("command_code"), ackCommand);
+    eventFields.insert(QStringLiteral("message_name"), mavMessageName(message.msgid));
+    PublicationLogger::instance().logEvent(QStringLiteral("command_tx"), eventFields);
+}
+
+void Mavlink_Raw_Message::logTelemetryEvent(const QString &eventType,
+                                            const mavlink_message_t &message,
+                                            const QVariantMap &fields)
+{
+    QVariantMap eventFields = fields;
+    eventFields.insert(QStringLiteral("sequence_id"), static_cast<qulonglong>(message.seq));
+    eventFields.insert(QStringLiteral("message_name"), mavMessageName(message.msgid));
+    eventFields.insert(QStringLiteral("mavlink_msg_id"), static_cast<int>(message.msgid));
+    PublicationLogger::instance().logEvent(eventType, eventFields);
+}
+
+Mavlink_Raw_Message::PendingCommand Mavlink_Raw_Message::takePendingCommand(int systemId, int command)
+{
+    const QString key = pendingCommandKey(systemId, command);
+    QList<PendingCommand> queue = pendingCommands.value(key);
+    if (queue.isEmpty())
+    {
+        return {};
+    }
+
+    const PendingCommand pending = queue.takeFirst();
+    if (queue.isEmpty())
+    {
+        pendingCommands.remove(key);
+    }
+    else
+    {
+        pendingCommands.insert(key, queue);
+    }
+    return pending;
+}
+
+QString Mavlink_Raw_Message::pendingCommandKey(int systemId, int command) const
+{
+    return QStringLiteral("%1:%2").arg(systemId).arg(command);
 }
 
 void Mavlink_Raw_Message::syncSelectedVehicleSignals()

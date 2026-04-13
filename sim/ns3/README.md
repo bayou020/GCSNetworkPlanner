@@ -79,6 +79,15 @@ Results are written to:
 - `sim/ns3/results/uav-secure-lte.csv`
 - `sim/ns3/results/uav-secure-nr.csv`
 
+For publication runs, the helper scripts now default to:
+
+- `logs/raw/<scenario_id>/<run_id>/ns3_lte_flow_monitor.csv`
+- `logs/raw/<scenario_id>/<run_id>/ns3_lte_metadata.json`
+- `logs/raw/<scenario_id>/<run_id>/ns3_nr_flow_monitor.csv`
+- `logs/raw/<scenario_id>/<run_id>/ns3_nr_metadata.json`
+
+The flat `sim/ns3/results/*.csv` path still works if you override `CSV_PATH`, but it is no longer the preferred structure for journal experiments.
+
 ## Live QML visualization
 
 The desktop GCS can now consume live ns-3 snapshots on `127.0.0.1:45454` and render:
@@ -204,3 +213,11 @@ This framework is designed for iterative PhD experiments, not just one-off runs.
 - add mobility traces from recorded UAV missions
 - add outage, congestion, and handover experiments
 - compare secure transport profiles under different radio access technologies
+
+## Publication evidence boundary
+
+For paper-quality analysis:
+
+- use `ns3_*_flow_monitor.csv` and `ns3_*_metadata.json` as simulator evidence
+- treat live snapshot metrics as `ui_visualization_only` unless independently corroborated
+- treat the security profile model as transport overhead plus setup delay only

@@ -37,6 +37,7 @@ public:
     qint64 monotonicMs() const;
     quint64 nextSequence(const QString &streamKey);
     QString nextCommandId(const QString &prefix = QStringLiteral("cmd"));
+    void flush();
     void logEvent(const QString &eventType, const QVariantMap &fields = {});
     void logError(const QString &message, const QVariantMap &fields = {});
 
@@ -44,6 +45,8 @@ private:
     PublicationLogger() = default;
 
     void ensureConfigured();
+    void flushLocked();
+    void scheduleFlushLocked();
     void writeMetadataFileLocked();
 
     Context m_context;
@@ -57,6 +60,7 @@ private:
     qint64 m_lastFlushMs = 0;
     int m_flushIntervalMs = 250;
     int m_flushEventCount = 128;
+    bool m_flushScheduled = false;
 };
 
 #endif // PUBLICATION_LOGGER_H

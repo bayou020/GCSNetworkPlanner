@@ -2,9 +2,12 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+source "$ROOT_DIR/sim/ns3/scripts/publication_env.sh"
 NETWORKPLANNER_RPI_ROOT="${NETWORKPLANNER_RPI_ROOT:-$ROOT_DIR/../NetworkPlannerRpi}"
 RPI_SCRIPT="${RPI_SCRIPT:-$NETWORKPLANNER_RPI_ROOT/scripts/run_ns3_live.sh}"
 export NS3_SIM_RPI_PORT="${NS3_SIM_RPI_PORT:-45455}"
+
+derive_publication_defaults "lte" "${UAVS:-100}" "${SECURITY:-wireguard}" "${MOBILITY:-1}" "$ROOT_DIR/logs"
 
 if [[ ! -x "$RPI_SCRIPT" ]]; then
   echo "[stack] expected RPi live bridge script at $RPI_SCRIPT" >&2

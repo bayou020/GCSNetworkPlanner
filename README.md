@@ -89,6 +89,7 @@ That gives you a reproducible way to exercise UAV control-plane behavior and use
 Detailed platform notes:
 
 - [docs/implementation/PLATFORM_CAPABILITIES.md](/home/boots/work/phd/GCSNetworkPlanner/docs/implementation/PLATFORM_CAPABILITIES.md)
+- [docs/publication/README.md](/home/boots/work/phd/GCSNetworkPlanner/docs/publication/README.md)
 
 ## Repository Highlights
 
@@ -210,6 +211,7 @@ Full reference:
 - [docs/implementation/CONFIGURATION.md](/home/boots/work/phd/GCSNetworkPlanner/docs/implementation/CONFIGURATION.md)
 - [docs/implementation/VIDEO_SIMULATION.md](/home/boots/work/phd/GCSNetworkPlanner/docs/implementation/VIDEO_SIMULATION.md)
 - [docs/implementation/TROUBLESHOOTING.md](/home/boots/work/phd/GCSNetworkPlanner/docs/implementation/TROUBLESHOOTING.md)
+- [docs/publication/DATA_MODEL.md](/home/boots/work/phd/GCSNetworkPlanner/docs/publication/DATA_MODEL.md)
 
 ## Project Layout
 
@@ -242,6 +244,7 @@ Detailed layout notes:
 - [Troubleshooting](/home/boots/work/phd/GCSNetworkPlanner/docs/implementation/TROUBLESHOOTING.md)
 - [Contributing](/home/boots/work/phd/GCSNetworkPlanner/docs/implementation/CONTRIBUTING.md)
 - [ns-3 Simulation Workspace](/home/boots/work/phd/GCSNetworkPlanner/sim/ns3/README.md)
+- [Publication Docs](/home/boots/work/phd/GCSNetworkPlanner/docs/publication/README.md)
 - [Security Policy](/home/boots/work/phd/GCSNetworkPlanner/SECURITY.md)
 - [Support](/home/boots/work/phd/GCSNetworkPlanner/SUPPORT.md)
 - [Code of Conduct](/home/boots/work/phd/GCSNetworkPlanner/CODE_OF_CONDUCT.md)

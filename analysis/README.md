@@ -37,6 +37,13 @@ python3 analysis/publication_pipeline.py compare \
   --sim-summary logs/analysis/<sim_scenario>/<sim_run>/run_summary.json
 ```
 
+Batch a small calibration plus hold-out campaign:
+
+```bash
+python3 analysis/campaign_pipeline.py \
+  --campaign-config analysis/templates/small_calibration_campaign.template.json
+```
+
 ## Outputs
 
 Normalization writes:
@@ -59,8 +66,22 @@ Comparison writes:
 - `logs/analysis/comparisons/<field_run>__vs__<sim_run>/comparison_metrics.csv`
 - `logs/analysis/comparisons/<field_run>__vs__<sim_run>/comparison_table.md`
 
+Campaign batching writes:
+
+- `logs/analysis/campaigns/<campaign_name>/pair_inventory.csv`
+- `logs/analysis/campaigns/<campaign_name>/calibration_table.csv`
+- `logs/analysis/campaigns/<campaign_name>/calibration_table.md`
+- `logs/analysis/campaigns/<campaign_name>/holdout_validation_table.csv`
+- `logs/analysis/campaigns/<campaign_name>/holdout_validation_table.md`
+- `logs/analysis/campaigns/<campaign_name>/data_quality_report.json`
+- `logs/analysis/campaigns/<campaign_name>/data_quality_report.md`
+- `logs/analysis/campaigns/<campaign_name>/scale_up_recommendation.json`
+- `logs/analysis/campaigns/<campaign_name>/scale_up_recommendation.md`
+
 ## Run Manifest
 
 If a run directory contains `run_manifest.json`, the normalization step carries it into the dataset manifest.
 
 Use [run_manifest.template.json](/home/boots/work/phd/GCSNetworkPlanner/analysis/templates/run_manifest.template.json) as the starting point for field campaigns.
+
+Use [small_calibration_campaign.template.json](/home/boots/work/phd/GCSNetworkPlanner/analysis/templates/small_calibration_campaign.template.json) as the starting point for the first small calibration plus hold-out campaign.

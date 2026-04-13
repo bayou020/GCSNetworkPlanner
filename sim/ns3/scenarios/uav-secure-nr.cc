@@ -14,7 +14,11 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <chrono>
+#include <cstdlib>
 #include <cmath>
+#include <exception>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -72,6 +76,19 @@ struct LiveLinkMetrics
     double ssSinrDb;
 };
 
+struct LinkModelSample
+{
+    uint32_t uavId;
+    double simTimeSeconds;
+    LiveLinkMetrics metrics;
+};
+
+struct PhaseTiming
+{
+    std::string name;
+    double durationSeconds;
+};
+
 struct UavStatusSnapshot
 {
     std::string vehicleType;
@@ -94,6 +111,113 @@ double
 Clamp(double value, double minimum, double maximum)
 {
     return std::max(minimum, std::min(value, maximum));
+}
+
+Vector
+BuildOverlappedGridPosition(uint32_t index,
+                            uint32_t gridColumns,
+                            double nominalSpacingMeters,
+                            double overlapSpacingMinMeters,
+                            double overlapSpacingMaxMeters,
+                            double jitterMeters,
+                            double heightMeters,
+                            Ptr<UniformRandomVariable> uniform)
+{
+    const uint32_t row = index / gridColumns;
+    const uint32_t col = index % gridColumns;
+
+    double x = col * nominalSpacingMeters;
+    double y = row * nominalSpacingMeters;
+
+    if (col > 0 && (col % 2 == 1))
+    {
+        const double overlappedSpacing =
+            uniform->GetValue(overlapSpacingMinMeters, overlapSpacingMaxMeters);
+        x -= std::max(0.0, nominalSpacingMeters - overlappedSpacing);
+    }
+    if (row > 0 && (row % 2 == 1))
+    {
+        const double overlappedSpacing =
+            uniform->GetValue(overlapSpacingMinMeters, overlapSpacingMaxMeters);
+        y -= std::max(0.0, nominalSpacingMeters - overlappedSpacing);
+    }
+
+    x += uniform->GetValue(-jitterMeters, jitterMeters);
+    y += uniform->GetValue(-jitterMeters, jitterMeters);
+    return Vector(x, y, heightMeters);
+}
+
+std::string
+EnvString(const char* name, const std::string& fallback = {})
+{
+    const char* value = std::getenv(name);
+    return value != nullptr ? std::string(value) : fallback;
+}
+
+std::string
+SanitizeIdentifier(std::string value, const std::string& fallback)
+{
+    if (value.empty())
+    {
+        return fallback;
+    }
+
+    for (char& character : value)
+    {
+        const bool isValid = (character >= 'a' && character <= 'z')
+                             || (character >= 'A' && character <= 'Z')
+                             || (character >= '0' && character <= '9')
+                             || character == '-' || character == '_' || character == '.';
+        if (!isValid)
+        {
+            character = '-';
+        }
+    }
+
+    return value;
+}
+
+std::string
+CurrentUtcRunId()
+{
+    std::time_t now = std::time(nullptr);
+    std::tm utcNow{};
+    gmtime_r(&now, &utcNow);
+    std::ostringstream stream;
+    stream << std::put_time(&utcNow, "%Y%m%dT%H%M%SZ");
+    return stream.str();
+}
+
+bool
+TryParseDouble(const std::string& value, double* output)
+{
+    if (value.empty())
+    {
+        return false;
+    }
+
+    try
+    {
+        *output = std::stod(value);
+        return true;
+    }
+    catch (const std::exception&)
+    {
+        return false;
+    }
+}
+
+void
+RecordPhase(std::vector<PhaseTiming>* timings,
+            const std::string& name,
+            const std::chrono::steady_clock::time_point& start,
+            const std::chrono::steady_clock::time_point& end)
+{
+    const double seconds =
+        std::chrono::duration_cast<std::chrono::duration<double>>(end - start).count();
+    timings->push_back({name, seconds});
+    std::cerr << "[nr-phase] " << name << '=' << std::fixed << std::setprecision(3) << seconds
+              << "s" << std::endl;
 }
 
 GeoCoordinate
@@ -323,8 +447,12 @@ class LivePublisher
                   uint16_t port,
                   const std::string& mirrorHost,
                   uint16_t mirrorPort,
+                  const std::string& scenarioId,
+                  const std::string& runId,
                   const SecurityProfile& security)
         : m_enabled(enabled)
+        , m_scenarioId(scenarioId)
+        , m_runId(runId)
         , m_security(security)
     {
         if (!m_enabled)
@@ -378,7 +506,11 @@ class LivePublisher
 
         std::ostringstream json;
         json << std::fixed << std::setprecision(7);
-        json << "{\"type\":\"snapshot\",\"rat\":\"" << rat << "\",\"simTime\":" << simTime
+        json << "{\"type\":\"snapshot\",\"scenarioId\":\"" << m_scenarioId
+             << "\",\"runId\":\"" << m_runId
+             << "\",\"source\":\"ns3_live_publisher\",\"metricOrigin\":\"snapshot_estimate\""
+             << ",\"evidenceLayer\":\"ui_visualization_only\",\"rat\":\"" << rat
+             << "\",\"simTime\":" << simTime
              << ",\"antennas\":[";
 
         for (uint32_t i = 0; i < antennas.GetN(); ++i)
@@ -477,6 +609,8 @@ class LivePublisher
     mutable bool m_enabled = false;
     mutable int m_socket = -1;
     mutable std::vector<sockaddr_in> m_destinations;
+    std::string m_scenarioId;
+    std::string m_runId;
     SecurityProfile m_security;
 };
 
@@ -510,6 +644,50 @@ ScheduleLiveSnapshot(LivePublisher* publisher,
                             antennaRangeMeters,
                             originLatitude,
                             originLongitude,
+                            motionStates,
+                            interval,
+                            stopTime);
+    }
+}
+
+void
+CaptureLinkModelSamples(std::vector<LinkModelSample>* samples,
+                        const std::string* rat,
+                        const NodeContainer* antennas,
+                        const NodeContainer* uavs,
+                        const SecurityProfile* security,
+                        const std::vector<UavMotionState>* motionStates,
+                        Time interval,
+                        Time stopTime)
+{
+    if (samples == nullptr || rat == nullptr || antennas == nullptr || uavs == nullptr
+        || security == nullptr)
+    {
+        return;
+    }
+
+    const double simTime = Simulator::Now().GetSeconds();
+    for (uint32_t i = 0; i < uavs->GetN(); ++i)
+    {
+        Vector position = uavs->Get(i)->GetObject<MobilityModel>()->GetPosition();
+        if (motionStates != nullptr && i < motionStates->size())
+        {
+            position = ComputeUavKinematics(motionStates->at(i), simTime).position;
+        }
+
+        samples->push_back(
+            {i + 1, simTime, EstimateLinkMetrics(*rat, i, simTime, position, *antennas, *security)});
+    }
+
+    if (Simulator::Now() + interval < stopTime)
+    {
+        Simulator::Schedule(interval,
+                            &CaptureLinkModelSamples,
+                            samples,
+                            rat,
+                            antennas,
+                            uavs,
+                            security,
                             motionStates,
                             interval,
                             stopTime);
@@ -568,10 +746,13 @@ FlowTypeForTuple(const Ipv4FlowClassifier::FiveTuple& tuple, uint16_t telemetryP
 
 void
 WriteCsvSummary(const std::string& path,
+                const std::string& scenarioId,
+                const std::string& runId,
                 const std::string& rat,
                 const SecurityProfile& security,
                 uint32_t uavs,
                 uint32_t baseStations,
+                double simTimeSeconds,
                 Ptr<Ipv4FlowClassifier> classifier,
                 const FlowMonitor::FlowStatsContainer& stats,
                 uint16_t telemetryPort)
@@ -579,8 +760,10 @@ WriteCsvSummary(const std::string& path,
     std::filesystem::create_directories(std::filesystem::path(path).parent_path());
 
     std::ofstream csv(path, std::ios::out | std::ios::trunc);
-    csv << "rat,security,uavs,base_stations,flow_id,flow_type,src_ip,dst_ip,src_port,dst_port,"
-           "tx_packets,rx_packets,lost_packets,pdr,throughput_mbps,mean_delay_ms,mean_jitter_ms\n";
+    csv << "scenario_id,run_id,source,evidence_layer,metric_origin,rat,security_profile,uavs,"
+           "base_stations,sim_time_s,security_overhead_bytes,security_setup_delay_s,flow_id,"
+           "flow_type,src_ip,dst_ip,src_port,dst_port,tx_packets,rx_packets,lost_packets,pdr,"
+           "throughput_mbps,mean_delay_ms,mean_jitter_ms\n";
 
     double totalThroughput = 0.0;
     double totalDelay = 0.0;
@@ -601,8 +784,11 @@ WriteCsvSummary(const std::string& path,
         const double pdr = stat.txPackets > 0 ? static_cast<double>(stat.rxPackets) / stat.txPackets
                                               : 0.0;
 
-        csv << rat << ',' << security.name << ',' << uavs << ',' << baseStations << ',' << flowId
-            << ',' << flowType << ',' << tuple.sourceAddress << ',' << tuple.destinationAddress
+        csv << scenarioId << ',' << runId << ",ns3_export,simulator_export,flow_monitor,"
+            << rat << ',' << security.name << ',' << uavs << ',' << baseStations << ','
+            << simTimeSeconds << ',' << security.overheadBytes << ','
+            << security.setupDelaySeconds << ',' << flowId << ',' << flowType << ','
+            << tuple.sourceAddress << ',' << tuple.destinationAddress
             << ',' << tuple.sourcePort << ',' << tuple.destinationPort << ',' << stat.txPackets
             << ',' << stat.rxPackets << ',' << stat.lostPackets << ',' << std::fixed
             << std::setprecision(6) << pdr << ',' << throughputMbps << ',' << meanDelayMs << ','
@@ -628,6 +814,164 @@ WriteCsvSummary(const std::string& path,
     }
 }
 
+void
+WriteLinkModelCsv(const std::string& path,
+                  const std::string& scenarioId,
+                  const std::string& runId,
+                  const std::string& rat,
+                  const SecurityProfile& security,
+                  uint32_t uavs,
+                  uint32_t baseStations,
+                  const std::vector<LinkModelSample>& samples)
+{
+    std::filesystem::create_directories(std::filesystem::path(path).parent_path());
+
+    std::ofstream csv(path, std::ios::out | std::ios::trunc);
+    csv << "scenario_id,run_id,source,evidence_layer,metric_origin,measurement_family,rat,"
+           "security_profile,uavs,base_stations,sim_time_s,security_overhead_bytes,"
+           "security_setup_delay_s,uav_id,network_type,quality,serving_label,ping_ms,"
+           "jitter_ms,packet_loss_pct,throughput_mbps,rssi_dbm,rsrp_dbm,rsrq_db,sinr_db\n";
+
+    for (const auto& sample : samples)
+    {
+        csv << scenarioId << ',' << runId
+            << ",ns3_export,simulator_export,link_model,sim_link_model," << rat << ','
+            << security.name << ',' << uavs << ',' << baseStations << ',' << std::fixed
+            << std::setprecision(6) << sample.simTimeSeconds << ',' << security.overheadBytes
+            << ',' << security.setupDelaySeconds << ',' << sample.uavId << ','
+            << sample.metrics.networkType << ',' << sample.metrics.quality << ','
+            << sample.metrics.servingLabel << ',' << sample.metrics.pingMs << ','
+            << sample.metrics.jitterMs << ',' << sample.metrics.packetLossPct << ','
+            << sample.metrics.throughputMbps << ',' << sample.metrics.rssiDbm << ','
+            << sample.metrics.rsrpDbm << ',' << sample.metrics.rsrqDb << ','
+            << sample.metrics.sinrDb << '\n';
+    }
+}
+
+void
+WriteNodePositionsJson(std::ostream& stream, const char* key, const NodeContainer& nodes)
+{
+    stream << "  \"" << key << "\": [\n";
+    for (uint32_t i = 0; i < nodes.GetN(); ++i)
+    {
+        Ptr<MobilityModel> mobilityModel = nodes.Get(i)->GetObject<MobilityModel>();
+        Vector position = mobilityModel != nullptr ? mobilityModel->GetPosition() : Vector();
+        stream << "    {\"node_index\": " << i << ", \"x_m\": " << position.x
+               << ", \"y_m\": " << position.y << ", \"z_m\": " << position.z << "}";
+        if (i + 1 != nodes.GetN())
+        {
+            stream << ',';
+        }
+        stream << '\n';
+    }
+    stream << "  ],\n";
+}
+
+void
+WriteRunMetadata(const std::string& path,
+                 const std::string& scenarioId,
+                 const std::string& runId,
+                 const std::string& rat,
+                 const SecurityProfile& security,
+                 uint32_t uavs,
+                 uint32_t baseStations,
+                 double simTimeSeconds,
+                 uint32_t rngRun,
+                 const std::string& baseStationLayoutMode,
+                 double baseStationNominalSpacingMeters,
+                 double baseStationJitterMeters,
+                 double baseStationOverlapSpacingMinMeters,
+                 double baseStationOverlapSpacingMaxMeters,
+                 const NodeContainer& baseStationsNodes,
+                 double frequencyHz,
+                 double bandwidthHz,
+                 uint16_t numerology,
+                 uint32_t ueAntennaRows,
+                 uint32_t ueAntennaColumns,
+                 uint32_t gnbAntennaRows,
+                 uint32_t gnbAntennaColumns,
+                 const std::string& beamformingMethod,
+                 uint32_t telemetryPayloadBytes,
+                 uint32_t telemetryIntervalMs,
+                 uint32_t controlPayloadBytes,
+                 uint32_t controlIntervalMs,
+                 const std::string& csvPath,
+                 const std::string& linkModelCsvPath,
+                 const std::string& syncMethod,
+                 bool hasSyncOffset,
+                 double syncOffsetMs,
+                 const std::string& syncNote,
+                 const std::vector<PhaseTiming>& phaseTimings)
+{
+    std::filesystem::create_directories(std::filesystem::path(path).parent_path());
+
+    std::ofstream metadata(path, std::ios::out | std::ios::trunc);
+    metadata << "{\n"
+             << "  \"schema_name\": \"networkplanner_sim_export\",\n"
+             << "  \"schema_version\": 1,\n"
+             << "  \"scenario_id\": \"" << scenarioId << "\",\n"
+             << "  \"run_id\": \"" << runId << "\",\n"
+             << "  \"source\": \"ns3_export\",\n"
+             << "  \"rat\": \"" << rat << "\",\n"
+             << "  \"security_profile\": \"" << security.name << "\",\n"
+             << "  \"uav_count\": " << uavs << ",\n"
+             << "  \"base_station_count\": " << baseStations << ",\n"
+             << "  \"sim_time_s\": " << simTimeSeconds << ",\n"
+             << "  \"rng_run\": " << rngRun << ",\n"
+             << "  \"base_station_layout_mode\": \"" << baseStationLayoutMode << "\",\n"
+             << "  \"base_station_nominal_spacing_m\": " << baseStationNominalSpacingMeters
+             << ",\n"
+             << "  \"base_station_jitter_m\": " << baseStationJitterMeters << ",\n"
+             << "  \"base_station_overlap_spacing_min_m\": "
+             << baseStationOverlapSpacingMinMeters << ",\n"
+             << "  \"base_station_overlap_spacing_max_m\": "
+             << baseStationOverlapSpacingMaxMeters << ",\n"
+             << "  \"frequency_hz\": " << frequencyHz << ",\n"
+             << "  \"bandwidth_hz\": " << bandwidthHz << ",\n"
+             << "  \"numerology\": " << numerology << ",\n"
+             << "  \"ue_antenna_rows\": " << ueAntennaRows << ",\n"
+             << "  \"ue_antenna_columns\": " << ueAntennaColumns << ",\n"
+             << "  \"gnb_antenna_rows\": " << gnbAntennaRows << ",\n"
+             << "  \"gnb_antenna_columns\": " << gnbAntennaColumns << ",\n"
+             << "  \"beamforming_method\": \"" << beamformingMethod << "\",\n"
+             << "  \"telemetry_payload_bytes\": " << telemetryPayloadBytes << ",\n"
+             << "  \"telemetry_interval_ms\": " << telemetryIntervalMs << ",\n"
+             << "  \"control_payload_bytes\": " << controlPayloadBytes << ",\n"
+             << "  \"control_interval_ms\": " << controlIntervalMs << ",\n"
+             << "  \"security_overhead_bytes\": " << security.overheadBytes << ",\n"
+             << "  \"security_setup_delay_s\": " << security.setupDelaySeconds << ",\n"
+             << "  \"flow_monitor_csv\": \"" << csvPath << "\",\n"
+             << "  \"flow_monitor_metric_origin\": \"flow_monitor\",\n"
+             << "  \"flow_monitor_evidence_layer\": \"simulator_export\",\n"
+             << "  \"flow_monitor_measurement_family\": \"sim_flow_performance\",\n"
+             << "  \"link_model_csv\": \"" << linkModelCsvPath << "\",\n"
+             << "  \"link_model_metric_origin\": \"link_model\",\n"
+             << "  \"link_model_evidence_layer\": \"simulator_export\",\n"
+             << "  \"link_model_measurement_family\": \"sim_link_model\",\n"
+             << "  \"live_snapshot_metric_origin\": \"snapshot_estimate\",\n"
+             << "  \"live_snapshot_evidence_layer\": \"ui_visualization_only\",\n"
+             << "  \"sync_method\": \"" << syncMethod << "\",\n";
+    WriteNodePositionsJson(metadata, "base_station_positions_m", baseStationsNodes);
+    if (hasSyncOffset)
+    {
+        metadata << "  \"sync_offset_ms\": " << syncOffsetMs << ",\n";
+    }
+    if (!syncNote.empty())
+    {
+        metadata << "  \"sync_note\": \"" << syncNote << "\",\n";
+    }
+    metadata << "  \"phase_timings_s\": {\n";
+    for (std::size_t i = 0; i < phaseTimings.size(); ++i)
+    {
+        metadata << "    \"" << phaseTimings[i].name << "\": " << phaseTimings[i].durationSeconds;
+        metadata << (i + 1 < phaseTimings.size() ? ",\n" : "\n");
+    }
+    metadata << "  },\n";
+    metadata << "  \"security_model_note\": "
+             << "\"Security overlay models transport overhead and session setup delay, not end-host cryptographic compute cost.\"\n"
+             << "}\n";
+}
+
 } // namespace
 
 int
@@ -645,6 +989,11 @@ main(int argc, char* argv[])
     uint32_t telemetryIntervalMs = 100;
     uint32_t controlPayloadBytes = 96;
     uint32_t controlIntervalMs = 500;
+    uint32_t ueAntennaRows = 2;
+    uint32_t ueAntennaColumns = 2;
+    uint32_t gnbAntennaRows = 4;
+    uint32_t gnbAntennaColumns = 4;
+    std::string beamformingMethod = "DirectPathBeamforming";
     double frequencyHz = 3.5e9;
     double bandwidthHz = 40e6;
     uint16_t numerology = 1;
@@ -662,7 +1011,25 @@ main(int argc, char* argv[])
     double mobilityRadiusMeters = 70.0;
     double originLatitude = 39.904459;
     double originLongitude = 116.406847;
-    std::string csvPath = "sim/ns3/results/uav-secure-nr.csv";
+    std::string scenarioId =
+        SanitizeIdentifier(EnvString("NP_SCENARIO_ID", "unspecified-scenario"), "unspecified-scenario");
+    std::string runId = SanitizeIdentifier(EnvString("NP_RUN_ID", CurrentUtcRunId()), CurrentUtcRunId());
+    std::string logRoot = EnvString("NP_LOG_ROOT", "logs");
+    std::string syncMethod = EnvString("NP_SYNC_METHOD", "unspecified");
+    std::string syncNote = EnvString("NP_SYNC_NOTE");
+    std::string syncOffsetArg = EnvString("NP_SYNC_OFFSET_MS");
+    uint32_t rngRun = 1;
+    try
+    {
+        rngRun = static_cast<uint32_t>(std::stoul(EnvString("NP_RNG_RUN", "1")));
+    }
+    catch (const std::exception&)
+    {
+        rngRun = 1;
+    }
+    std::string csvPath;
+    std::string linkModelCsvPath;
+    std::string metadataPath;
 
     CommandLine cmd(__FILE__);
     cmd.AddValue("uavs", "Number of UAV endpoints", uavs);
@@ -681,6 +1048,13 @@ main(int argc, char* argv[])
                  controlPayloadBytes);
     cmd.AddValue("controlIntervalMs", "Control emission interval in milliseconds",
                  controlIntervalMs);
+    cmd.AddValue("ueAntennaRows", "UE antenna array rows", ueAntennaRows);
+    cmd.AddValue("ueAntennaColumns", "UE antenna array columns", ueAntennaColumns);
+    cmd.AddValue("gnbAntennaRows", "gNodeB antenna array rows", gnbAntennaRows);
+    cmd.AddValue("gnbAntennaColumns", "gNodeB antenna array columns", gnbAntennaColumns);
+    cmd.AddValue("beamformingMethod",
+                 "NR beamforming method: DirectPathBeamforming or Omni",
+                 beamformingMethod);
     cmd.AddValue("frequency", "Carrier frequency in Hz", frequencyHz);
     cmd.AddValue("bandwidth", "Channel bandwidth in Hz", bandwidthHz);
     cmd.AddValue("numerology", "NR numerology", numerology);
@@ -700,11 +1074,42 @@ main(int argc, char* argv[])
                  mobilityRadiusMeters);
     cmd.AddValue("originLat", "GPS origin latitude for projected positions", originLatitude);
     cmd.AddValue("originLon", "GPS origin longitude for projected positions", originLongitude);
+    cmd.AddValue("scenarioId", "Scenario identifier for publication-grade exports", scenarioId);
+    cmd.AddValue("runId", "Run identifier for publication-grade exports", runId);
+    cmd.AddValue("logRoot", "Root directory for logs/raw and derived outputs", logRoot);
+    cmd.AddValue("syncMethod", "Clock synchronization method description", syncMethod);
+    cmd.AddValue("syncOffsetMs", "Optional clock offset estimate in milliseconds", syncOffsetArg);
+    cmd.AddValue("syncNote", "Optional synchronization note", syncNote);
     cmd.AddValue("csv", "CSV output path", csvPath);
+    cmd.AddValue("linkModelCsv", "Link-model CSV output path", linkModelCsvPath);
+    cmd.AddValue("metadata", "Run metadata JSON output path", metadataPath);
     cmd.Parse(argc, argv);
+
+    scenarioId = SanitizeIdentifier(scenarioId, "unspecified-scenario");
+    runId = SanitizeIdentifier(runId, CurrentUtcRunId());
+    const std::filesystem::path runDirectory =
+        std::filesystem::path(logRoot) / "raw" / scenarioId / runId;
+    if (csvPath.empty())
+    {
+        csvPath = (runDirectory / "ns3_nr_flow_monitor.csv").string();
+    }
+    if (linkModelCsvPath.empty())
+    {
+        linkModelCsvPath = (runDirectory / "ns3_nr_link_model.csv").string();
+    }
+    if (metadataPath.empty())
+    {
+        metadataPath = (runDirectory / "ns3_nr_metadata.json").string();
+    }
+    double syncOffsetMs = 0.0;
+    const bool hasSyncOffset = TryParseDouble(syncOffsetArg, &syncOffsetMs);
+    std::vector<PhaseTiming> phaseTimings;
+    const auto totalStart = std::chrono::steady_clock::now();
+    auto phaseStart = totalStart;
 
     const SecurityProfile security =
         ResolveSecurityProfile(securityName, securityOverheadBytes, securitySetupDelaySeconds);
+    const std::string rat = "nr";
 
     if (live != 0)
     {
@@ -728,6 +1133,31 @@ main(int argc, char* argv[])
     gridScenario.SetScenarioLength(scenarioWidthMeters);
     gridScenario.SetScenarioHeight(scenarioHeightMeters);
     gridScenario.CreateScenario();
+    NodeContainer baseStationsContainer = gridScenario.GetBaseStations();
+    Ptr<UniformRandomVariable> bsLayoutRv = CreateObject<UniformRandomVariable>();
+    const double baseStationJitterMeters = horizontalDistanceMeters * 0.12;
+    const double baseStationOverlapSpacingMinMeters = horizontalDistanceMeters * 0.6;
+    const double baseStationOverlapSpacingMaxMeters = horizontalDistanceMeters * 0.8;
+    for (uint32_t i = 0; i < baseStationsContainer.GetN(); ++i)
+    {
+        Ptr<MobilityModel> mobilityModel = baseStationsContainer.Get(i)->GetObject<MobilityModel>();
+        if (mobilityModel == nullptr)
+        {
+            continue;
+        }
+
+        mobilityModel->SetPosition(BuildOverlappedGridPosition(i,
+                                                               columns,
+                                                               horizontalDistanceMeters,
+                                                               baseStationOverlapSpacingMinMeters,
+                                                               baseStationOverlapSpacingMaxMeters,
+                                                               baseStationJitterMeters,
+                                                               baseStationHeightMeters,
+                                                               bsLayoutRv));
+    }
+    auto phaseEnd = std::chrono::steady_clock::now();
+    RecordPhase(&phaseTimings, "create_scenario", phaseStart, phaseEnd);
+    phaseStart = phaseEnd;
 
     Ptr<NrPointToPointEpcHelper> epcHelper = CreateObject<NrPointToPointEpcHelper>();
     Ptr<IdealBeamformingHelper> beamformingHelper = CreateObject<IdealBeamformingHelper>();
@@ -745,23 +1175,46 @@ main(int argc, char* argv[])
     OperationBandInfo band = ccBwpCreator.CreateOperationBandContiguousCc(bandConf);
     channelHelper->AssignChannelsToBands({band});
     BandwidthPartInfoPtrVector allBwps = CcBwpCreator::GetAllBwps({band});
+    phaseEnd = std::chrono::steady_clock::now();
+    RecordPhase(&phaseTimings, "configure_nr_helpers", phaseStart, phaseEnd);
+    phaseStart = phaseEnd;
 
-    beamformingHelper->SetAttribute("BeamformingMethod",
-                                    TypeIdValue(DirectPathBeamforming::GetTypeId()));
-    nrHelper->SetUeAntennaAttribute("NumRows", UintegerValue(2));
-    nrHelper->SetUeAntennaAttribute("NumColumns", UintegerValue(2));
+    if (beamformingMethod == "Omni")
+    {
+        beamformingHelper->SetAttribute(
+            "BeamformingMethod",
+            TypeIdValue(QuasiOmniDirectPathBeamforming::GetTypeId()));
+    }
+    else if (beamformingMethod == "DirectPathBeamforming")
+    {
+        beamformingHelper->SetAttribute("BeamformingMethod",
+                                        TypeIdValue(DirectPathBeamforming::GetTypeId()));
+    }
+    else
+    {
+        NS_ABORT_MSG("Unsupported beamforming method: " << beamformingMethod);
+    }
+
+    nrHelper->SetUeAntennaAttribute("NumRows", UintegerValue(ueAntennaRows));
+    nrHelper->SetUeAntennaAttribute("NumColumns", UintegerValue(ueAntennaColumns));
     nrHelper->SetUeAntennaAttribute("AntennaElement",
                                     PointerValue(CreateObject<IsotropicAntennaModel>()));
-    nrHelper->SetGnbAntennaAttribute("NumRows", UintegerValue(4));
-    nrHelper->SetGnbAntennaAttribute("NumColumns", UintegerValue(4));
+    nrHelper->SetGnbAntennaAttribute("NumRows", UintegerValue(gnbAntennaRows));
+    nrHelper->SetGnbAntennaAttribute("NumColumns", UintegerValue(gnbAntennaColumns));
     nrHelper->SetGnbAntennaAttribute("AntennaElement",
                                      PointerValue(CreateObject<IsotropicAntennaModel>()));
     epcHelper->SetAttribute("S1uLinkDelay", TimeValue(MilliSeconds(10)));
 
     NetDeviceContainer gnbNetDev =
         nrHelper->InstallGnbDevice(gridScenario.GetBaseStations(), allBwps);
+    phaseEnd = std::chrono::steady_clock::now();
+    RecordPhase(&phaseTimings, "install_gnb_devices", phaseStart, phaseEnd);
+    phaseStart = phaseEnd;
     NetDeviceContainer ueNetDev =
         nrHelper->InstallUeDevice(gridScenario.GetUserTerminals(), allBwps);
+    phaseEnd = std::chrono::steady_clock::now();
+    RecordPhase(&phaseTimings, "install_ue_devices", phaseStart, phaseEnd);
+    phaseStart = phaseEnd;
 
     for (uint32_t i = 0; i < gnbNetDev.GetN(); ++i)
     {
@@ -777,8 +1230,10 @@ main(int argc, char* argv[])
     Ipv4InterfaceContainer ueIpIfaces =
         epcHelper->AssignUeIpv4Address(NetDeviceContainer(ueNetDev));
     nrHelper->AttachToClosestGnb(ueNetDev, gnbNetDev);
+    phaseEnd = std::chrono::steady_clock::now();
+    RecordPhase(&phaseTimings, "attach_and_ip_setup", phaseStart, phaseEnd);
+    phaseStart = phaseEnd;
 
-    NodeContainer baseStationsContainer = gridScenario.GetBaseStations();
     NodeContainer uavsContainer = gridScenario.GetUserTerminals();
 
     uint16_t telemetryPort = 9000;
@@ -812,6 +1267,9 @@ main(int argc, char* argv[])
                                    UintegerValue(controlPayloadBytes + security.overheadBytes));
         clientApps.Add(controlClient.Install(remoteHost));
     }
+    phaseEnd = std::chrono::steady_clock::now();
+    RecordPhase(&phaseTimings, "install_applications", phaseStart, phaseEnd);
+    phaseStart = phaseEnd;
 
     const Time serverStart = Seconds(0.5);
     const Time clientStart = Seconds(1.0 + security.setupDelaySeconds);
@@ -839,7 +1297,19 @@ main(int argc, char* argv[])
     monitor->SetAttribute("PacketSizeBinWidth", DoubleValue(32));
 
     LivePublisher livePublisher(
-        live != 0, liveHost, livePort, liveMirrorHost, liveMirrorPort, security);
+        live != 0, liveHost, livePort, liveMirrorHost, liveMirrorPort, scenarioId, runId, security);
+    std::vector<LinkModelSample> linkModelSamples;
+    const Time linkModelInterval = MilliSeconds(liveIntervalMs);
+    Simulator::Schedule(clientStart,
+                        &CaptureLinkModelSamples,
+                        &linkModelSamples,
+                        &rat,
+                        &baseStationsContainer,
+                        &uavsContainer,
+                        &security,
+                        mobility != 0 ? &motionStates : nullptr,
+                        linkModelInterval,
+                        stopTime);
     if (live != 0)
     {
         const Time liveInterval = MilliSeconds(liveIntervalMs);
@@ -858,19 +1328,73 @@ main(int argc, char* argv[])
     }
 
     Simulator::Stop(stopTime);
+    phaseEnd = std::chrono::steady_clock::now();
+    RecordPhase(&phaseTimings, "pre_run_setup", phaseStart, phaseEnd);
+    phaseStart = phaseEnd;
     Simulator::Run();
+    phaseEnd = std::chrono::steady_clock::now();
+    RecordPhase(&phaseTimings, "simulator_run", phaseStart, phaseEnd);
+    phaseStart = phaseEnd;
 
     monitor->CheckForLostPackets();
     Ptr<Ipv4FlowClassifier> classifier =
         DynamicCast<Ipv4FlowClassifier>(flowmonHelper.GetClassifier());
     WriteCsvSummary(csvPath,
-                    "nr",
+                    scenarioId,
+                    runId,
+                    rat,
                     security,
                     uavs,
                     baseStations,
+                    simTimeSeconds,
                     classifier,
                     monitor->GetFlowStats(),
                     telemetryPort);
+    WriteLinkModelCsv(linkModelCsvPath,
+                      scenarioId,
+                      runId,
+                      rat,
+                      security,
+                      uavs,
+                      baseStations,
+                      linkModelSamples);
+    phaseEnd = std::chrono::steady_clock::now();
+    RecordPhase(&phaseTimings, "write_csv_outputs", phaseStart, phaseEnd);
+    RecordPhase(&phaseTimings, "total_wall_clock", totalStart, phaseEnd);
+    WriteRunMetadata(metadataPath,
+                     scenarioId,
+                     runId,
+                     rat,
+                     security,
+                     uavs,
+                     baseStations,
+                     simTimeSeconds,
+                     rngRun,
+                     "seeded_overlapped_grid",
+                     horizontalDistanceMeters,
+                     baseStationJitterMeters,
+                     baseStationOverlapSpacingMinMeters,
+                     baseStationOverlapSpacingMaxMeters,
+                     baseStationsContainer,
+                     frequencyHz,
+                     bandwidthHz,
+                     numerology,
+                     ueAntennaRows,
+                     ueAntennaColumns,
+                     gnbAntennaRows,
+                     gnbAntennaColumns,
+                     beamformingMethod,
+                     telemetryPayloadBytes,
+                     telemetryIntervalMs,
+                     controlPayloadBytes,
+                     controlIntervalMs,
+                     csvPath,
+                     linkModelCsvPath,
+                     syncMethod,
+                     hasSyncOffset,
+                     syncOffsetMs,
+                     syncNote,
+                     phaseTimings);
 
     Simulator::Destroy();
     return 0;

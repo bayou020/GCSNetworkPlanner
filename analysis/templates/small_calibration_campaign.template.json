@@ -1,0 +1,77 @@
+{
+  "campaign_name": "small-calibration-lte-v1",
+  "description": "Three-family LTE calibration set plus three reserved LTE hold-out families, three repetitions each.",
+  "raw_root": "logs/raw",
+  "normalized_root": "logs/normalized",
+  "analysis_root": "logs/analysis",
+  "output_root": "logs/analysis/campaigns",
+  "repetitions_per_family": 3,
+  "quality_gates": {
+    "require_all_expected_pairs": true,
+    "require_all_holdout_pairs": true,
+    "minimum_metric_overlap_per_pair": 3,
+    "minimum_comparable_metric_overlap_per_pair": 3
+  },
+  "families": {
+    "calibration": [
+      {
+        "family_id": "lte-1-static-none-d050",
+        "field_scenario_id": "field-lte-1-static-none-d050",
+        "sim_scenario_id": "sim-lte-1-static-none-d050",
+        "notes": "1-UAV static dwell baseline at approximately 50 m."
+      },
+      {
+        "family_id": "lte-1-mob-none-routeA",
+        "field_scenario_id": "field-lte-1-mob-none-routeA",
+        "sim_scenario_id": "sim-lte-1-mob-none-routeA",
+        "notes": "1-UAV mobility baseline using the primary route."
+      },
+      {
+        "family_id": "lte-2-static-none-pairA",
+        "field_scenario_id": "field-lte-2-static-none-pairA",
+        "sim_scenario_id": "sim-lte-2-static-none-pairA",
+        "notes": "2-UAV concurrent static baseline."
+      }
+    ],
+    "holdout": [
+      {
+        "family_id": "lte-1-static-none-d200",
+        "field_scenario_id": "field-lte-1-static-none-d200",
+        "sim_scenario_id": "sim-lte-1-static-none-d200",
+        "notes": "Reserved static hold-out family at a farther dwell distance."
+      },
+      {
+        "family_id": "lte-1-mob-none-routeB",
+        "field_scenario_id": "field-lte-1-mob-none-routeB",
+        "sim_scenario_id": "sim-lte-1-mob-none-routeB",
+        "notes": "Reserved mobility hold-out family on a distinct route."
+      },
+      {
+        "family_id": "lte-2-static-none-pairB",
+        "field_scenario_id": "field-lte-2-static-none-pairB",
+        "sim_scenario_id": "sim-lte-2-static-none-pairB",
+        "notes": "Reserved 2-UAV hold-out family."
+      }
+    ]
+  },
+  "runs": [
+    { "pair_id": "cal-d050-r1", "split": "calibration", "family_id": "lte-1-static-none-d050", "repetition": 1, "field_run_id": "", "sim_run_id": "" },
+    { "pair_id": "cal-d050-r2", "split": "calibration", "family_id": "lte-1-static-none-d050", "repetition": 2, "field_run_id": "", "sim_run_id": "" },
+    { "pair_id": "cal-d050-r3", "split": "calibration", "family_id": "lte-1-static-none-d050", "repetition": 3, "field_run_id": "", "sim_run_id": "" },
+    { "pair_id": "cal-routeA-r1", "split": "calibration", "family_id": "lte-1-mob-none-routeA", "repetition": 1, "field_run_id": "", "sim_run_id": "" },
+    { "pair_id": "cal-routeA-r2", "split": "calibration", "family_id": "lte-1-mob-none-routeA", "repetition": 2, "field_run_id": "", "sim_run_id": "" },
+    { "pair_id": "cal-routeA-r3", "split": "calibration", "family_id": "lte-1-mob-none-routeA", "repetition": 3, "field_run_id": "", "sim_run_id": "" },
+    { "pair_id": "cal-pairA-r1", "split": "calibration", "family_id": "lte-2-static-none-pairA", "repetition": 1, "field_run_id": "", "sim_run_id": "" },
+    { "pair_id": "cal-pairA-r2", "split": "calibration", "family_id": "lte-2-static-none-pairA", "repetition": 2, "field_run_id": "", "sim_run_id": "" },
+    { "pair_id": "cal-pairA-r3", "split": "calibration", "family_id": "lte-2-static-none-pairA", "repetition": 3, "field_run_id": "", "sim_run_id": "" },
+    { "pair_id": "hold-d200-r1", "split": "holdout", "family_id": "lte-1-static-none-d200", "repetition": 1, "field_run_id": "", "sim_run_id": "" },
+    { "pair_id": "hold-d200-r2", "split": "holdout", "family_id": "lte-1-static-none-d200", "repetition": 2, "field_run_id": "", "sim_run_id": "" },
+    { "pair_id": "hold-d200-r3", "split": "holdout", "family_id": "lte-1-static-none-d200", "repetition": 3, "field_run_id": "", "sim_run_id": "" },
+    { "pair_id": "hold-routeB-r1", "split": "holdout", "family_id": "lte-1-mob-none-routeB", "repetition": 1, "field_run_id": "", "sim_run_id": "" },
+    { "pair_id": "hold-routeB-r2", "split": "holdout", "family_id": "lte-1-mob-none-routeB", "repetition": 2, "field_run_id": "", "sim_run_id": "" },
+    { "pair_id": "hold-routeB-r3", "split": "holdout", "family_id": "lte-1-mob-none-routeB", "repetition": 3, "field_run_id": "", "sim_run_id": "" },
+    { "pair_id": "hold-pairB-r1", "split": "holdout", "family_id": "lte-2-static-none-pairB", "repetition": 1, "field_run_id": "", "sim_run_id": "" },
+    { "pair_id": "hold-pairB-r2", "split": "holdout", "family_id": "lte-2-static-none-pairB", "repetition": 2, "field_run_id": "", "sim_run_id": "" },
+    { "pair_id": "hold-pairB-r3", "split": "holdout", "family_id": "lte-2-static-none-pairB", "repetition": 3, "field_run_id": "", "sim_run_id": "" }
+  ]
+}

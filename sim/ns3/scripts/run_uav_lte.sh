@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+source "$ROOT_DIR/sim/ns3/scripts/publication_env.sh"
 NS3_BASE_DIR="${NS3_BASE_DIR:-$ROOT_DIR/.deps}"
 NS3_ROOT="${NS3_ROOT:-$NS3_BASE_DIR/ns-allinone-3.47/ns-3.47}"
 NS3_OUTPUT_DIR="${NS3_OUTPUT_DIR:-$NS3_ROOT/build-ran}"
@@ -11,7 +12,6 @@ UAVS="${UAVS:-100}"
 BASE_STATIONS="${BASE_STATIONS:-4}"
 SIM_TIME="${SIM_TIME:-60}"
 SECURITY="${SECURITY:-wireguard}"
-CSV_PATH="${CSV_PATH:-$RESULTS_DIR/uav-secure-lte.csv}"
 NS3_LTE_INTERSITE_DISTANCE="${NS3_LTE_INTERSITE_DISTANCE:-750}"
 NS3_LTE_COVERAGE_RADIUS="${NS3_LTE_COVERAGE_RADIUS:-250}"
 NS3_LTE_DL_BANDWIDTH="${NS3_LTE_DL_BANDWIDTH:-50}"
@@ -21,6 +21,7 @@ NS3_TELEMETRY_PAYLOAD="${NS3_TELEMETRY_PAYLOAD:-180}"
 NS3_TELEMETRY_INTERVAL_MS="${NS3_TELEMETRY_INTERVAL_MS:-100}"
 NS3_CONTROL_PAYLOAD="${NS3_CONTROL_PAYLOAD:-96}"
 NS3_CONTROL_INTERVAL_MS="${NS3_CONTROL_INTERVAL_MS:-500}"
+NS3_SKIP_BUILD="${NS3_SKIP_BUILD:-0}"
 LIVE="${LIVE:-0}"
 LIVE_HOST="${LIVE_HOST:-127.0.0.1}"
 LIVE_PORT="${LIVE_PORT:-${NS3_SIM_PORT:-45454}}"
@@ -32,8 +33,18 @@ MOBILITY_RADIUS="${MOBILITY_RADIUS:-80}"
 ORIGIN_LAT="${ORIGIN_LAT:-39.904459}"
 ORIGIN_LON="${ORIGIN_LON:-116.406847}"
 
-"$ROOT_DIR/sim/ns3/scripts/build_ns3.sh"
+derive_publication_defaults "lte" "$UAVS" "$SECURITY" "$MOBILITY" "$ROOT_DIR/logs"
+CSV_PATH="${CSV_PATH:-$(default_ns3_flow_csv lte)}"
+LINK_MODEL_CSV_PATH="${LINK_MODEL_CSV_PATH:-$(default_ns3_link_model_csv lte)}"
+METADATA_PATH="${METADATA_PATH:-$(default_ns3_metadata_json lte)}"
+
+if [[ "$NS3_SKIP_BUILD" != "1" ]]; then
+  "$ROOT_DIR/sim/ns3/scripts/build_ns3.sh"
+else
+  echo "[ns3] skipping build because NS3_SKIP_BUILD=1"
+fi
 mkdir -p "$RESULTS_DIR"
+ensure_run_log_dir
 
 EXECUTABLE="$(find "$NS3_OUTPUT_DIR" -type f -executable -name '*uav-secure-lte*' | head -n 1)"
 if [[ -z "$EXECUTABLE" ]]; then
@@ -41,13 +52,19 @@ if [[ -z "$EXECUTABLE" ]]; then
   exit 1
 fi
 
-echo "[ns3] running LTE scenario: uavs=$UAVS enbs=$BASE_STATIONS security=$SECURITY"
+echo "[ns3] running LTE scenario: scenario=$NP_SCENARIO_ID run=$NP_RUN_ID uavs=$UAVS enbs=$BASE_STATIONS security=$SECURITY"
 ARGS=(
   --uavs="$UAVS"
   --baseStations="$BASE_STATIONS"
   --simTime="$SIM_TIME"
   --security="$SECURITY"
   --csv="$CSV_PATH"
+  --linkModelCsv="$LINK_MODEL_CSV_PATH"
+  --metadata="$METADATA_PATH"
+  --scenarioId="$NP_SCENARIO_ID"
+  --runId="$NP_RUN_ID"
+  --syncMethod="$NP_SYNC_METHOD"
+  --RngRun="$NP_RNG_RUN"
   --interSiteDistance="$NS3_LTE_INTERSITE_DISTANCE"
   --coverageRadius="$NS3_LTE_COVERAGE_RADIUS"
   --dlBandwidth="$NS3_LTE_DL_BANDWIDTH"
@@ -57,7 +74,17 @@ ARGS=(
   --telemetryIntervalMs="$NS3_TELEMETRY_INTERVAL_MS"
   --controlPayload="$NS3_CONTROL_PAYLOAD"
   --controlIntervalMs="$NS3_CONTROL_INTERVAL_MS"
+  --mobility="$MOBILITY"
+  --mobilityRadius="$MOBILITY_RADIUS"
 )
+
+if [[ -n "${NP_SYNC_OFFSET_MS:-}" ]]; then
+  ARGS+=(--syncOffsetMs="$NP_SYNC_OFFSET_MS")
+fi
+
+if [[ -n "${NP_SYNC_NOTE:-}" ]]; then
+  ARGS+=(--syncNote="$NP_SYNC_NOTE")
+fi
 
 if [[ "$LIVE" == "1" ]]; then
   ARGS+=(
@@ -67,8 +94,6 @@ if [[ "$LIVE" == "1" ]]; then
     --liveMirrorHost="$LIVE_MIRROR_HOST"
     --liveMirrorPort="$LIVE_MIRROR_PORT"
     --liveIntervalMs="$LIVE_INTERVAL_MS"
-    --mobility="$MOBILITY"
-    --mobilityRadius="$MOBILITY_RADIUS"
     --originLat="$ORIGIN_LAT"
     --originLon="$ORIGIN_LON"
   )

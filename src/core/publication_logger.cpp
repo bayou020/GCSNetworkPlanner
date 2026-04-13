@@ -4,11 +4,13 @@
 
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QDebug>
 #include <QDir>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMetaType>
 #include <QMutexLocker>
+#include <QTimer>
 
 namespace
 {
@@ -141,6 +143,7 @@ void PublicationLogger::configure(const Context &context)
         m_flushEventCount = std::max(1, envInt("NP_LOG_FLUSH_EVENT_COUNT", 128));
         m_eventsSinceFlush = 0;
         m_lastFlushMs = m_elapsed.elapsed();
+        m_flushScheduled = false;
 
         m_logDirectory = QDir(context.logRoot)
                              .filePath(QStringLiteral("raw/%1/%2")
@@ -155,7 +158,11 @@ void PublicationLogger::configure(const Context &context)
                 m_eventFile.close();
             }
             m_eventFile.setFileName(eventPath);
-            m_eventFile.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
+            if (!m_eventFile.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
+                qWarning().noquote()
+                    << QStringLiteral("PublicationLogger failed to open %1: %2")
+                           .arg(eventPath, m_eventFile.errorString());
+            }
         }
 
         writeMetadataFileLocked();
@@ -212,6 +219,12 @@ QString PublicationLogger::nextCommandId(const QString &prefix)
         .arg(sequence);
 }
 
+void PublicationLogger::flush()
+{
+    QMutexLocker locker(&m_mutex);
+    flushLocked();
+}
+
 void PublicationLogger::logEvent(const QString &eventType, const QVariantMap &fields)
 {
     QMutexLocker locker(&m_mutex);
@@ -263,9 +276,9 @@ void PublicationLogger::logEvent(const QString &eventType, const QVariantMap &fi
                           || m_flushIntervalMs == 0
                           || (nowMs - m_lastFlushMs) >= m_flushIntervalMs;
     if (flushDue) {
-        m_eventFile.flush();
-        m_eventsSinceFlush = 0;
-        m_lastFlushMs = nowMs;
+        flushLocked();
+    } else {
+        scheduleFlushLocked();
     }
 }
 
@@ -300,8 +313,38 @@ void PublicationLogger::ensureConfigured()
     const QString eventPath =
         QDir(m_logDirectory).filePath(m_context.source + QStringLiteral("_events.jsonl"));
     m_eventFile.setFileName(eventPath);
-    m_eventFile.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
+    if (!m_eventFile.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
+        qWarning().noquote()
+            << QStringLiteral("PublicationLogger failed to open %1: %2")
+                   .arg(eventPath, m_eventFile.errorString());
+    }
     writeMetadataFileLocked();
+}
+
+void PublicationLogger::flushLocked()
+{
+    if (!m_eventFile.isOpen() || m_eventsSinceFlush == 0) {
+        m_flushScheduled = false;
+        return;
+    }
+
+    m_eventFile.flush();
+    m_eventsSinceFlush = 0;
+    m_lastFlushMs = m_elapsed.elapsed();
+    m_flushScheduled = false;
+}
+
+void PublicationLogger::scheduleFlushLocked()
+{
+    if (m_flushScheduled || m_flushIntervalMs <= 0) {
+        return;
+    }
+
+    m_flushScheduled = true;
+    const int delayMs = m_flushIntervalMs;
+    QTimer::singleShot(delayMs, []() {
+        PublicationLogger::instance().flush();
+    });
 }
 
 void PublicationLogger::writeMetadataFileLocked()

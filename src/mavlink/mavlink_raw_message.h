@@ -171,11 +171,28 @@ public slots:
 
 
 private:
+    struct PendingCommand
+    {
+        QString commandId;
+        QString commandName;
+        qint64 sentAtMs = 0;
+        quint64 sequenceId = 0;
+    };
+
     QString vehicleTypeString(uint8_t type) const;
     QString systemStatusString(uint8_t status) const;
     QVariantMap vehicleStateForSystem(int systemId) const;
     void setVehicleStateValue(int systemId, const QString &key, const QVariant &value);
     void syncSelectedVehicleSignals();
+    void logDiscreteCommandTx(int ackCommand,
+                              const QString &commandName,
+                              const mavlink_message_t &message,
+                              const QVariantMap &fields = {});
+    void logTelemetryEvent(const QString &eventType,
+                           const mavlink_message_t &message,
+                           const QVariantMap &fields = {});
+    PendingCommand takePendingCommand(int systemId, int command);
+    QString pendingCommandKey(int systemId, int command) const;
 
     mavlink_status_t lastStatus;
     uint8_t cp;
@@ -196,9 +213,10 @@ private:
     int custom_mode, base_mode,intMissionResult;
     QVariant mission_result,declinedIndex;
     int modeIndex;
-float yaw,roll,pitch;
+    float yaw,roll,pitch;
     int targetSystemId = 1;
     QHash<int, QVariantMap> vehicleStates;
+    QHash<QString, QList<PendingCommand>> pendingCommands;
     bool manualControlEnabled = false;
 };
 
