@@ -1,0 +1,66 @@
+# Publication Analysis Pipeline
+
+This directory contains the minimum analysis path needed for the paper:
+
+- normalize raw run artifacts into one merged dataset
+- summarize command, telemetry, and network behavior per run
+- compare one field run against one mirrored simulation run
+
+## Commands
+
+Normalize one run:
+
+```bash
+python3 analysis/publication_pipeline.py normalize \
+  --raw-run-dir logs/raw/<scenario_id>/<run_id>
+```
+
+Summarize one normalized run:
+
+```bash
+python3 analysis/publication_pipeline.py summarize \
+  --normalized-run-dir logs/normalized/<scenario_id>/<run_id>
+```
+
+The summarizer selects representative communication metrics from the evidence layer implied by the scenario domain:
+
+- `field-*` scenarios use `field_ground_truth`
+- `sim-*` scenarios use `simulator_export`
+
+This prevents auxiliary artifacts from another layer from contaminating per-run headline metrics.
+
+Compare one field summary against one simulation summary:
+
+```bash
+python3 analysis/publication_pipeline.py compare \
+  --field-summary logs/analysis/<field_scenario>/<field_run>/run_summary.json \
+  --sim-summary logs/analysis/<sim_scenario>/<sim_run>/run_summary.json
+```
+
+## Outputs
+
+Normalization writes:
+
+- `logs/normalized/<scenario_id>/<run_id>/events.csv`
+- `logs/normalized/<scenario_id>/<run_id>/dataset_manifest.json`
+- optional `events.parquet` if `--write-parquet` is requested and `pandas+pyarrow` are available
+
+Summarization writes:
+
+- `logs/analysis/<scenario_id>/<run_id>/run_summary.json`
+- `logs/analysis/<scenario_id>/<run_id>/run_summary.csv`
+- `logs/analysis/<scenario_id>/<run_id>/metric_summary.csv`
+- `logs/analysis/<scenario_id>/<run_id>/telemetry_continuity.csv`
+- `logs/analysis/<scenario_id>/<run_id>/publication_table.md`
+
+Comparison writes:
+
+- `logs/analysis/comparisons/<field_run>__vs__<sim_run>/comparison_summary.json`
+- `logs/analysis/comparisons/<field_run>__vs__<sim_run>/comparison_metrics.csv`
+- `logs/analysis/comparisons/<field_run>__vs__<sim_run>/comparison_table.md`
+
+## Run Manifest
+
+If a run directory contains `run_manifest.json`, the normalization step carries it into the dataset manifest.
+
+Use [run_manifest.template.json](/home/boots/work/phd/GCSNetworkPlanner/analysis/templates/run_manifest.template.json) as the starting point for field campaigns.

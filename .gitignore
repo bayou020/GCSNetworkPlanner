@@ -1,9 +1,14 @@
 /build/
+/build-*/
 /bin/
 /.deps/
 /env
 /.codex
 /.private/
+/logs/
+/outputs/
+analysis/__pycache__/
+*.pyc
 
 CMakeUserPresets.json
 .DS_Store
@@ -22,5 +27,3 @@ CMakeUserPresets.json
 *.pdb
 *.log
 *.core
-core
-/.codex

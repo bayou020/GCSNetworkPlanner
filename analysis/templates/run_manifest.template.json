@@ -1,0 +1,42 @@
+{
+  "schema_name": "networkplanner_run_manifest",
+  "schema_version": 1,
+  "scenario_id": "field-lte-2-mob-none-pairA",
+  "run_id": "20260413T120000Z",
+  "campaign": {
+    "operator": "name-or-team",
+    "site": "test-field-name",
+    "location": {
+      "latitude": 0.0,
+      "longitude": 0.0,
+      "description": "launch point or field reference"
+    },
+    "weather": {
+      "summary": "clear, low wind",
+      "temperature_c": 0.0,
+      "wind_mps": 0.0
+    }
+  },
+  "platform": {
+    "uav_model": "airframe-model",
+    "flight_controller": "autopilot/firmware",
+    "modem": "modem model and operator",
+    "gcs_host": "hostname",
+    "rpi_host": "hostname"
+  },
+  "experiment": {
+    "rat": "lte",
+    "security_profile": "none",
+    "uav_count": 2,
+    "motion_profile": "routeA",
+    "altitude_m": 30.0,
+    "telemetry_interval_ms": 100,
+    "control_interval_ms": 500
+  },
+  "timing": {
+    "sync_method": "ntp",
+    "sync_offset_ms": 0.0,
+    "notes": "replace with measured offset estimate if known"
+  },
+  "notes": "free-text notes about anomalies, interruptions, or hardware substitutions"
+}
