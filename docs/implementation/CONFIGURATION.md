@@ -111,6 +111,50 @@ This split matters. If both the GCS and the RPi bridge bind the same unicast UDP
 consumer may receive the live ns-3 snapshots and the map can collapse back to the legacy single-UAV
 marker.
 
+### Collision Detection And Avoidance
+
+The GCS collision layer is configured entirely through environment variables so the safety policy is explicit and reproducible in publication runs.
+
+Core thresholds:
+
+- `NP_GCS_COLLISION_WARNING_ENTER_M`
+  - default `10`
+  - enters `WARNING` when pairwise 3D separation drops below this threshold
+- `NP_GCS_COLLISION_WARNING_EXIT_M`
+  - default `12`
+  - leaves `WARNING` only after the pair separates beyond this threshold
+- `NP_GCS_COLLISION_ALERT_ENTER_M`
+  - default `6`
+  - enters `ALERT` when pairwise 3D separation reaches this threshold
+- `NP_GCS_COLLISION_ALERT_EXIT_M`
+  - default `8`
+  - leaves `ALERT` only after the pair separates beyond this threshold
+- `NP_GCS_COLLISION_SAFETY_AXIS_ENTER_M`
+  - default `5`
+  - hard safety-volume half-axis in meters for the `5 m x 5 m x 5 m` box
+- `NP_GCS_COLLISION_SAFETY_AXIS_EXIT_M`
+  - default `6`
+  - hysteresis half-axis used before clearing a safety-volume breach
+
+Avoidance-command controls:
+
+- `NP_GCS_COLLISION_COMMAND_INTERVAL_MS`
+- `NP_GCS_COLLISION_COMMAND_MAGNITUDE`
+- `NP_GCS_COLLISION_COMMAND_FLOOR`
+- `NP_GCS_COLLISION_SEND_MAVLINK_REPORT`
+
+Default behavior:
+
+- `WARNING` if 3D separation `< 10 m`
+- `ALERT` if 3D separation `<= 6 m`
+- `ALERT` immediately if the pair enters the `5 x 5 x 5 m` safety box
+- the GCS emits rule-based MAVLink `MANUAL_CONTROL` avoidance commands
+- the GCS also emits MAVLink `COLLISION` advisory reports by default for traceability
+
+See:
+
+- [docs/implementation/COLLISION_AVOIDANCE.md](/home/boots/work/phd/GCSNetworkPlanner/docs/implementation/COLLISION_AVOIDANCE.md)
+
 ### ns-3 Radio And Traffic Tuning
 
 The `run_live_*` helpers inherit environment variables and forward them to the underlying

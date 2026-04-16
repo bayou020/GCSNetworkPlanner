@@ -1,10 +1,12 @@
 
 #include <QApplication>
+#include <QHostAddress>
 #include <QQuickView>
 #include <QQuickWindow>
 #include <QQmlEngine>
 #include <QObject>
 #include <QTimer>
+#include <QUdpSocket>
 #include <QtQuick/QSGRendererInterface>
 
 #include "udpgcs.h"
@@ -36,7 +38,11 @@ int main(int argc, char *argv[])
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
     QCoreApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
 #endif
+    #if defined(Q_OS_MACOS)
+    QQuickWindow::setGraphicsApi(QSGRendererInterface::Metal);
+#else
     QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
+#endif
     QCoreApplication::setOrganizationName("GCSNetworkPlanner");
     QCoreApplication::setApplicationName("NetworkPlannerGCS");
 
@@ -59,6 +65,7 @@ int main(int argc, char *argv[])
     WeatherService *weatherService = new WeatherService(&a);
     Ns3SimulationFeed *simulationFeed = new Ns3SimulationFeed(&a);
     VideoStreamFeed *videoStreamFeed = new VideoStreamFeed(&a);
+    QUdpSocket *videoSelectionSocket = new QUdpSocket(&a);
     DJI::onboardSDK::DjiGcs dji;
 
 
@@ -68,9 +75,13 @@ int main(int argc, char *argv[])
 #ifdef QMAPLIBRE_QML_IMPORT_PATH
     engine->addImportPath(QStringLiteral(QMAPLIBRE_QML_IMPORT_PATH));
 #endif
-    const QString locationCachePath =
-        QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + "/QtLocation";
-    QDir(locationCachePath).removeRecursively();
+    if (qEnvironmentVariableIntValue("NP_GCS_CLEAR_LOCATION_CACHE") == 1)
+    {
+        const QString locationCachePath =
+            QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation)
+            + QStringLiteral("/QtLocation");
+        QDir(locationCachePath).removeRecursively();
+    }
 
     qmlRegisterType<CustomPlotItem>("CustomPlot", 1, 0, "CustomPlotItem");
     /*
@@ -249,6 +260,60 @@ int main(int argc, char *argv[])
                      videoStreamFeed,
                      [simulationFeed, videoStreamFeed]() {
         videoStreamFeed->setSelectedUavId(simulationFeed->selectedUavId());
+    });
+    QObject::connect(simulationFeed,
+                     &Ns3SimulationFeed::selectedUavChanged,
+                     &a,
+                     [simulationFeed, videoSelectionSocket]() {
+        const int selectedId = simulationFeed->selectedUavId();
+        if (selectedId < 0)
+        {
+            return;
+        }
+
+        bool ok = false;
+        const quint16 controlPort =
+            static_cast<quint16>(qEnvironmentVariableIntValue("NPVIDEO_CONTROL_PORT", &ok));
+        const quint16 targetPort = ok && controlPort > 0 ? controlPort : 5601;
+        const QByteArray payload = QByteArray::number(selectedId);
+        videoSelectionSocket->writeDatagram(payload, QHostAddress::LocalHost, targetPort);
+    });
+    QObject::connect(simulationFeed,
+                     &Ns3SimulationFeed::collisionAvoidanceRequested,
+                     &a,
+                     [mav_dec](const QVariantList &commands) {
+        for (const QVariant &entry : commands)
+        {
+            const QVariantMap command = entry.toMap();
+            const int systemId = command.value(QStringLiteral("systemId")).toInt();
+            if (systemId <= 0)
+            {
+                continue;
+            }
+
+            mav_dec->sendManualControlToSystem(systemId,
+                                               command.value(QStringLiteral("roll")).toInt(),
+                                               command.value(QStringLiteral("pitch")).toInt(),
+                                               command.value(QStringLiteral("yaw")).toInt(),
+                                               command.value(QStringLiteral("throttle")).toInt(),
+                                               command.value(QStringLiteral("reason")).toString());
+
+            if (command.value(QStringLiteral("sendMavlinkReport")).toBool())
+            {
+                const int peerId = command.value(QStringLiteral("nearestPeerId")).toInt() + 1;
+                if (peerId > 0)
+                {
+                    mav_dec->sendCollisionReportToSystem(
+                        systemId,
+                        peerId,
+                        command.value(QStringLiteral("timeToClosestSeconds")).toDouble(),
+                        command.value(QStringLiteral("horizontalDistanceMeters")).toDouble(),
+                        command.value(QStringLiteral("verticalDistanceMeters")).toDouble(),
+                        command.value(QStringLiteral("severity")).toString(),
+                        command.value(QStringLiteral("collisionAction")).toString());
+                }
+            }
+        }
     });
 
     //-------------Latititude_longitude_Signals_to_mission------------//

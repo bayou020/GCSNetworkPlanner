@@ -166,6 +166,19 @@ public slots:
     void    setIndexMode(int index);
     void    setIndexModeResult();
     void    setManualControlEnabled(bool enabled);
+    void    sendManualControlToSystem(int systemId,
+                                      int roll,
+                                      int pitch,
+                                      int yaw,
+                                      int throttle,
+                                      const QString &commandName = QStringLiteral("manual_control"));
+    void    sendCollisionReportToSystem(int systemId,
+                                        int peerSystemId,
+                                        double timeToClosestSeconds,
+                                        double horizontalDistanceMeters,
+                                        double verticalDistanceMeters,
+                                        const QString &severity,
+                                        const QString &actionName);
 
     QStringList deviceNames() const;
 

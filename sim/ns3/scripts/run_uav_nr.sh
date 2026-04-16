@@ -8,6 +8,21 @@ NS3_ROOT="${NS3_ROOT:-$NS3_BASE_DIR/ns-allinone-3.47/ns-3.47}"
 NS3_OUTPUT_DIR="${NS3_OUTPUT_DIR:-$NS3_ROOT/build-ran}"
 RESULTS_DIR="${RESULTS_DIR:-$ROOT_DIR/sim/ns3/results}"
 
+find_built_executable() {
+  local search_root="$1"
+  local pattern="$2"
+  local candidate=""
+
+  while IFS= read -r candidate; do
+    if [[ -x "$candidate" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done < <(find "$search_root" -type f -name "$pattern")
+
+  return 1
+}
+
 UAVS="${UAVS:-100}"
 BASE_STATIONS="${BASE_STATIONS:-4}"
 SIM_TIME="${SIM_TIME:-60}"
@@ -29,6 +44,9 @@ NS3_TELEMETRY_PAYLOAD="${NS3_TELEMETRY_PAYLOAD:-180}"
 NS3_TELEMETRY_INTERVAL_MS="${NS3_TELEMETRY_INTERVAL_MS:-100}"
 NS3_CONTROL_PAYLOAD="${NS3_CONTROL_PAYLOAD:-96}"
 NS3_CONTROL_INTERVAL_MS="${NS3_CONTROL_INTERVAL_MS:-500}"
+NS3_VIDEO_PAYLOAD_BYTES="${NS3_VIDEO_PAYLOAD_BYTES:-1400}"
+NS3_VIDEO_BITRATE_MBPS="${NS3_VIDEO_BITRATE_MBPS:-0}"
+NS3_VIDEO_STREAM_UAVS="${NS3_VIDEO_STREAM_UAVS:-0}"
 NS3_SKIP_BUILD="${NS3_SKIP_BUILD:-0}"
 LIVE="${LIVE:-0}"
 LIVE_HOST="${LIVE_HOST:-127.0.0.1}"
@@ -54,7 +72,7 @@ fi
 mkdir -p "$RESULTS_DIR"
 ensure_run_log_dir
 
-EXECUTABLE="$(find "$NS3_OUTPUT_DIR" -type f -executable -name '*uav-secure-nr*' | head -n 1)"
+EXECUTABLE="$(find_built_executable "$NS3_OUTPUT_DIR" '*uav-secure-nr*' || true)"
 if [[ -z "$EXECUTABLE" ]]; then
   echo "[ns3] could not find built NR scenario executable in $NS3_OUTPUT_DIR" >&2
   exit 1
@@ -90,6 +108,9 @@ ARGS=(
   --telemetryIntervalMs="$NS3_TELEMETRY_INTERVAL_MS"
   --controlPayload="$NS3_CONTROL_PAYLOAD"
   --controlIntervalMs="$NS3_CONTROL_INTERVAL_MS"
+  --videoPayload="$NS3_VIDEO_PAYLOAD_BYTES"
+  --videoBitrateMbps="$NS3_VIDEO_BITRATE_MBPS"
+  --videoUavs="$NS3_VIDEO_STREAM_UAVS"
   --mobility="$MOBILITY"
   --mobilityRadius="$MOBILITY_RADIUS"
 )
@@ -107,12 +128,18 @@ if [[ "$LIVE" == "1" ]]; then
     --live=1
     --liveHost="$LIVE_HOST"
     --livePort="$LIVE_PORT"
-    --liveMirrorHost="$LIVE_MIRROR_HOST"
-    --liveMirrorPort="$LIVE_MIRROR_PORT"
     --liveIntervalMs="$LIVE_INTERVAL_MS"
     --originLat="$ORIGIN_LAT"
     --originLon="$ORIGIN_LON"
   )
+
+  if [[ -n "$LIVE_MIRROR_HOST" ]]; then
+    ARGS+=(--liveMirrorHost="$LIVE_MIRROR_HOST")
+  fi
+
+  if [[ "$LIVE_MIRROR_PORT" != "0" ]]; then
+    ARGS+=(--liveMirrorPort="$LIVE_MIRROR_PORT")
+  fi
 fi
 
 "$EXECUTABLE" "${ARGS[@]}" "$@"

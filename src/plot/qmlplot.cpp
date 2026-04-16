@@ -3,13 +3,27 @@
 #include <QDebug>
 #include <qmath.h>
 
+namespace
+{
+
+int plotRefreshIntervalMs()
+{
+    bool ok = false;
+    const int configuredMs = qEnvironmentVariableIntValue("NP_GCS_PLOT_UPDATE_MS", &ok);
+    if (!ok) {
+        return 250;
+    }
+    return qMax(50, configuredMs);
+}
+
+}
 
 CustomPlotItem::CustomPlotItem( QQuickItem* parent ) : QQuickPaintedItem( parent )
   , m_CustomPlot( nullptr ), m_timerId( 0 )
 {
     setFlag( QQuickItem::ItemHasContents, true );
     setAcceptedMouseButtons( Qt::AllButtons );
-    dataTimer=new QTimer();
+    dataTimer=new QTimer(this);
     readyToPlot=0;
     battery=0;
     //indexed=0;
@@ -66,11 +80,10 @@ void CustomPlotItem::initCustomPlot()
     connect(m_CustomPlot->yAxis, SIGNAL(rangeChanged(QCPRange)), m_CustomPlot->yAxis2, SLOT(setRange(QCPRange)));
     // setup a timer that repeatedly calls MainWindow::realtimeDataSlot:
     connect(dataTimer, SIGNAL(timeout()), this, SLOT(realtimeDataSlot()));
-    dataTimer->start(0); // Interval 0 means to refresh as fast as possible
-    startTimer(100);
+    dataTimer->start(plotRefreshIntervalMs());
 
     connect( m_CustomPlot, &QCustomPlot::afterReplot, this, &CustomPlotItem::onCustomReplot );
-    m_CustomPlot->replot();
+    m_CustomPlot->replot(QCustomPlot::rpQueuedReplot);
 
     qDebug()<< "ready to plot: "<< readyToPlot;
 }
@@ -108,6 +121,9 @@ void CustomPlotItem::treatementQMLPlot(QVariant index)
 }
 void CustomPlotItem::realtimeDataSlot()
 {
+    if (!m_CustomPlot || !isVisible()) {
+        return;
+    }
 
     static QElapsedTimer time;
     if (!time.isValid())
@@ -116,13 +132,14 @@ void CustomPlotItem::realtimeDataSlot()
     double key = time.elapsed()/1000.0; // time elapsed since start of demo, in seconds
 
     static double lastPointKey = 0;
+    bool shouldReplot = false;
 
   //   qDebug()<<"yaw on func " << indexed;
 
         if (indexed==0)
 
 
-        { if (key-lastPointKey > 0.002) // at most add point every 2 ms
+        { if (key-lastPointKey > 0.01)
             {
 
             m_CustomPlot->graph(0)->addData(key, lte_rssi);
@@ -133,39 +150,44 @@ void CustomPlotItem::realtimeDataSlot()
         m_CustomPlot->graph(1)->rescaleValueAxis(true);
         m_CustomPlot->graph(2)->rescaleValueAxis(true);
         lastPointKey = key;
-        m_CustomPlot->replot();
+        shouldReplot = true;
 
 
             }}
         else if (indexed==1)
 
         {
-            if (key-lastPointKey > 0.002) // at most add point every 2 ms
+            if (key-lastPointKey > 0.01)
             {
 
             m_CustomPlot->graph(0)->data().clear();
-            m_CustomPlot->graph(1)->data().clear();
-            m_CustomPlot->graph(2)->data().clear();
-            m_CustomPlot->clearGraphs();
+            if (m_CustomPlot->graphCount() > 1) {
+                m_CustomPlot->graph(1)->data().clear();
+            }
+            if (m_CustomPlot->graphCount() > 2) {
+                m_CustomPlot->graph(2)->data().clear();
+            }
             m_CustomPlot->graph(0)->addData(key, _yaw);
         // rescale value (vertical) axis to fit the current data:
         m_CustomPlot->graph(0)->rescaleValueAxis(true);
         lastPointKey = key;
-        m_CustomPlot->replot();
+        shouldReplot = true;
 
        }
-            else {
-                m_CustomPlot->clearPlottables();
-                m_CustomPlot->replot();
+    }
+    else {
+        return;
+    }
 
-            }
+    if (!shouldReplot) {
+        return;
     }
     // make key axis range scroll with the data (at a constant range size of 8):
     m_CustomPlot->xAxis->setRange(key, 100, Qt::AlignRight);
     ar->axis(QCPAxis::atBottom)->setRange(key, 100, Qt::AlignRight);
     ar2->axis(QCPAxis::atBottom)->setRange(key, 100, Qt::AlignRight);
 
-    m_CustomPlot->replot();
+    m_CustomPlot->replot(QCustomPlot::rpQueuedReplot);
 
 //treatementRT(indexed);
 //    static QTime time(QTime::currentTime());
@@ -270,12 +292,7 @@ void CustomPlotItem::wheelEvent( QWheelEvent *event )
 
 void CustomPlotItem::timerEvent(QTimerEvent *event)
 {
-    static double t, U;
-    U = battery; //((double)rand() / RAND_MAX) * 5;
-    // m_CustomPlot->graph(0)->addData(t, U);
-    //qDebug() << Q_FUNC_INFO << QString("Adding dot t = %1, S = %2").arg(t).arg(U);
-    t++;
-    m_CustomPlot->replot();
+    QQuickPaintedItem::timerEvent(event);
 }
 
 void CustomPlotItem::graphClicked( QCPAbstractPlottable* plottable )

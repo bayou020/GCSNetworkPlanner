@@ -19,6 +19,7 @@ This repository is maintained as a public codebase with a reproducible build flo
 - Click-driven OpenWeather markers and optional weather raster overlays
 - Live ns-3 LTE/NR simulation overlays for UAV and antenna visualization in QML
 - Clickable live simulation UAVs with right-panel network metrics for LTE and NR studies
+- Collision detection with `WARNING` and `ALERT` thresholds plus rule-based MAVLink avoidance commands
 - Simulated per-UAV video monitor fed from the Raspberry Pi bridge and shaped by live ns-3 loss and delay
 - MAVLink telemetry decoding and command dispatch
 - DJI Onboard SDK integration retained from the earlier codebase
@@ -62,6 +63,11 @@ The repository is no longer just a legacy GCS prototype. The current platform ca
   - `LOSS`
   - `THRPT`
   - serving cell and distance
+- collision monitoring and safety enforcement:
+  - `WARNING` below `10 m` 3D separation
+  - `ALERT` at or below `6 m` 3D separation
+  - hard `5 m x 5 m x 5 m` safety-volume breach detection
+  - automatic MAVLink avoidance commands for alert states
 
 ### 4. Video Impairment Simulation
 
@@ -179,6 +185,44 @@ NPRPI_VIDEO_WIDTH=640 NPRPI_VIDEO_HEIGHT=360 NPRPI_VIDEO_FPS=15 \
 ./sim/ns3/scripts/run_live_uav_lte_with_rpi.sh
 ```
 
+### Publication-Ready Dense Live Profile
+
+For large live fleet demonstrations and figure capture, use the maintained wrapper below. It derives denser but still stable visualization defaults automatically:
+
+- `LIVE_INTERVAL_MS=75` for dense live snapshots
+- `NP_GCS_NS3_UI_UPDATE_MS=50` for smoother GCS playback
+- `NPRPI_NS3_GPS_INTERVAL_MS=100`
+- `NPRPI_NS3_ATTITUDE_INTERVAL_MS=100`
+
+Example:
+
+```bash
+source ./env
+WITH_RPI=1 RAT=lte UAVS=100 BASE_STATIONS=4 SIM_TIME=120 SECURITY=openvpn \
+./sim/ns3/scripts/run_live_network_planner_100x4.sh
+```
+
+If you only want the simulator overlays without the RPi/video bridge:
+
+```bash
+source ./env
+WITH_RPI=0 RAT=nr UAVS=100 BASE_STATIONS=4 SIM_TIME=120 SECURITY=wireguard \
+./sim/ns3/scripts/run_live_network_planner_100x4.sh
+```
+
+### Run A 4K-Equivalent Channel Test
+
+This mode injects equivalent video traffic into ns-3 itself rather than relying on the local JPEG preview path:
+
+```bash
+source ./env
+START_GCS=0 WITH_RPI=0 RAT=lte UAVS=20 BASE_STATIONS=4 SIM_TIME=120 SECURITY=openvpn \
+VIDEO_STREAM_UAVS=1 VIDEO_BITRATE_MBPS=25 VIDEO_PAYLOAD_BYTES=1400 \
+./sim/ns3/scripts/run_live_4k_equivalent.sh
+```
+
+The exported FlowMonitor CSV classifies that stream as `video-uplink`.
+
 ## Configuration
 
 Runtime configuration is driven by environment variables rather than hardcoded project-local secrets. The tracked template is [env.example](/home/boots/work/phd/GCSNetworkPlanner/env.example); your machine-local copy should live in `env`.
@@ -205,10 +249,21 @@ Core variables:
 - `NS3_NR_NUMEROLOGY`
 - `NPVIDEO_HOST`
 - `NPVIDEO_PORT`
+- `NP_GCS_COLLISION_WARNING_ENTER_M`
+- `NP_GCS_COLLISION_WARNING_EXIT_M`
+- `NP_GCS_COLLISION_ALERT_ENTER_M`
+- `NP_GCS_COLLISION_ALERT_EXIT_M`
+- `NP_GCS_COLLISION_SAFETY_AXIS_ENTER_M`
+- `NP_GCS_COLLISION_SAFETY_AXIS_EXIT_M`
+- `NP_GCS_COLLISION_COMMAND_INTERVAL_MS`
+- `NP_GCS_COLLISION_COMMAND_MAGNITUDE`
+- `NP_GCS_COLLISION_COMMAND_FLOOR`
+- `NP_GCS_COLLISION_SEND_MAVLINK_REPORT`
 
 Full reference:
 
 - [docs/implementation/CONFIGURATION.md](/home/boots/work/phd/GCSNetworkPlanner/docs/implementation/CONFIGURATION.md)
+- [docs/implementation/COLLISION_AVOIDANCE.md](/home/boots/work/phd/GCSNetworkPlanner/docs/implementation/COLLISION_AVOIDANCE.md)
 - [docs/implementation/VIDEO_SIMULATION.md](/home/boots/work/phd/GCSNetworkPlanner/docs/implementation/VIDEO_SIMULATION.md)
 - [docs/implementation/TROUBLESHOOTING.md](/home/boots/work/phd/GCSNetworkPlanner/docs/implementation/TROUBLESHOOTING.md)
 - [docs/publication/DATA_MODEL.md](/home/boots/work/phd/GCSNetworkPlanner/docs/publication/DATA_MODEL.md)

@@ -2,6 +2,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+source "$ROOT_DIR/sim/ns3/scripts/publication_env.sh"
+
+derive_live_visualization_defaults "${UAVS:-100}" 0
 
 LIVE=1 \
 MOBILITY="${MOBILITY:-1}" \
@@ -14,4 +17,5 @@ NS3_TELEMETRY_PAYLOAD="${NS3_TELEMETRY_PAYLOAD:-180}" \
 NS3_TELEMETRY_INTERVAL_MS="${NS3_TELEMETRY_INTERVAL_MS:-100}" \
 NS3_CONTROL_PAYLOAD="${NS3_CONTROL_PAYLOAD:-96}" \
 NS3_CONTROL_INTERVAL_MS="${NS3_CONTROL_INTERVAL_MS:-500}" \
+LIVE_INTERVAL_MS="${LIVE_INTERVAL_MS:-75}" \
 "${ROOT_DIR}/sim/ns3/scripts/run_uav_lte.sh" "$@"

@@ -8,6 +8,7 @@
 - [x] command lifecycle uses `command_id` and `sequence_id`
 - [x] telemetry continuity can be computed from timestamps and sequence IDs
 - [x] evidence layers distinguish field, simulator-exported, UI-only, and derived metrics
+- [x] collision policy, state transitions, and avoidance commands emit structured logs
 
 ## Experiment Metadata
 

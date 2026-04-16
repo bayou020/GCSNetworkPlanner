@@ -180,7 +180,7 @@ unsigned char rj_xtime(unsigned char x)
 /* -------------------------------------------------------------------------- */
 void aes_subBytes(unsigned char *buf)
 {
-  register unsigned char i = 16;
+  unsigned char i = 16;
 
   while (i--) buf[i] = rj_sbox(buf[i]);
 } /* aes_subBytes */
@@ -188,7 +188,7 @@ void aes_subBytes(unsigned char *buf)
 /* -------------------------------------------------------------------------- */
 void aes_subBytes_inv(unsigned char *buf)
 {
-  register unsigned char i = 16;
+  unsigned char i = 16;
 
   while (i--) buf[i] = rj_sbox_inv(buf[i]);
 } /* aes_subBytes_inv */
@@ -196,7 +196,7 @@ void aes_subBytes_inv(unsigned char *buf)
 /* -------------------------------------------------------------------------- */
 void aes_addRoundKey(unsigned char *buf, unsigned char *key)
 {
-  register unsigned char i = 16;
+  unsigned char i = 16;
 
   while (i--) buf[i] ^= key[i];
 } /* aes_addRoundKey */
@@ -204,7 +204,7 @@ void aes_addRoundKey(unsigned char *buf, unsigned char *key)
 /* -------------------------------------------------------------------------- */
 void aes_addRoundKey_cpy(unsigned char *buf, unsigned char *key, unsigned char *cpk)
 {
-  register unsigned char i = 16;
+  unsigned char i = 16;
 
   while (i--) buf[i] ^= (cpk[i] = key[i]), cpk[16 + i] = key[16 + i];
 } /* aes_addRoundKey_cpy */
@@ -212,7 +212,7 @@ void aes_addRoundKey_cpy(unsigned char *buf, unsigned char *key, unsigned char *
 /* -------------------------------------------------------------------------- */
 void aes_shiftRows(unsigned char *buf)
 {
-  register unsigned char i, j; /* to make it potentially parallelable :) */
+  unsigned char i, j; /* to make it potentially parallelable :) */
 
   i = buf[1];
   buf[1] = buf[5];
@@ -236,7 +236,7 @@ void aes_shiftRows(unsigned char *buf)
 /* -------------------------------------------------------------------------- */
 void aes_shiftRows_inv(unsigned char *buf)
 {
-  register unsigned char i, j; /* same as above :) */
+  unsigned char i, j; /* same as above :) */
 
   i = buf[1];
   buf[1] = buf[13];
@@ -260,7 +260,7 @@ void aes_shiftRows_inv(unsigned char *buf)
 /* -------------------------------------------------------------------------- */
 void aes_mixColumns(unsigned char *buf)
 {
-  register unsigned char i, a, b, c, d, e;
+  unsigned char i, a, b, c, d, e;
 
   for (i = 0; i < 16; i += 4)
   {
@@ -279,7 +279,7 @@ void aes_mixColumns(unsigned char *buf)
 /* -------------------------------------------------------------------------- */
 void aes_mixColumns_inv(unsigned char *buf)
 {
-  register unsigned char i, a, b, c, d, e, x, y, z;
+  unsigned char i, a, b, c, d, e, x, y, z;
 
   for (i = 0; i < 16; i += 4)
   {
@@ -301,7 +301,7 @@ void aes_mixColumns_inv(unsigned char *buf)
 /* -------------------------------------------------------------------------- */
 void aes_expandEncKey(unsigned char *k, unsigned char *rc)
 {
-  register unsigned char i;
+  unsigned char i;
 
   k[0] ^= rj_sbox(k[29]) ^ (*rc);
   k[1] ^= rj_sbox(k[30]);
@@ -348,7 +348,7 @@ void aes_expandDecKey(unsigned char *k, unsigned char *rc)
 void aes256_init(aes256_context *ctx, unsigned char *k)
 {
   unsigned char rcon = 1;
-  register unsigned char i;
+  unsigned char i;
 
   for (i = 0; i < sizeof(ctx->key); i++) ctx->enckey[i] = ctx->deckey[i] = k[i];
   for (i = 8; --i;) aes_expandEncKey(ctx->deckey, &rcon);
@@ -357,7 +357,7 @@ void aes256_init(aes256_context *ctx, unsigned char *k)
 /* -------------------------------------------------------------------------- */
 void aes256_done(aes256_context *ctx)
 {
-  register unsigned char i;
+  unsigned char i;
 
   for (i = 0; i < sizeof(ctx->key); i++) ctx->key[i] = ctx->enckey[i] = ctx->deckey[i] = 0;
 } /* aes256_done */

@@ -30,6 +30,9 @@ NS_LOG_COMPONENT_DEFINE("UavSecureLte");
 namespace
 {
 
+constexpr char kSnapshotChunkMagic[] = {'N', 'S', '3', 'C'};
+constexpr std::size_t kMaxSnapshotChunkPayloadBytes = 7000;
+
 struct SecurityProfile
 {
     std::string name;
@@ -102,6 +105,20 @@ double
 Clamp(double value, double minimum, double maximum)
 {
     return std::max(minimum, std::min(value, maximum));
+}
+
+void
+AppendUint16(std::string& buffer, uint16_t value)
+{
+    const uint16_t networkValue = htons(value);
+    buffer.append(reinterpret_cast<const char*>(&networkValue), sizeof(networkValue));
+}
+
+void
+AppendUint32(std::string& buffer, uint32_t value)
+{
+    const uint32_t networkValue = htonl(value);
+    buffer.append(reinterpret_cast<const char*>(&networkValue), sizeof(networkValue));
 }
 
 double
@@ -488,8 +505,9 @@ class LivePublisher
             return;
         }
 
+        const bool compactSnapshot = uavs.GetN() >= 50;
         std::ostringstream json;
-        json << std::fixed << std::setprecision(7);
+        json << std::fixed << std::setprecision(compactSnapshot ? 6 : 7);
         json << "{\"type\":\"snapshot\",\"scenarioId\":\"" << m_scenarioId
              << "\",\"runId\":\"" << m_runId
              << "\",\"source\":\"ns3_live_publisher\",\"metricOrigin\":\"snapshot_estimate\""
@@ -539,41 +557,121 @@ class LivePublisher
             {
                 json << ',';
             }
-            json << "{\"id\":" << i << ",\"label\":\"UAV-" << std::setw(3) << std::setfill('0')
-                 << i + 1 << "\",\"latitude\":" << coordinate.latitude << ",\"longitude\":"
-                 << coordinate.longitude << ",\"altitudeMeters\":" << position.z
-                 << ",\"headingDegrees\":" << headingDegrees
-                 << ",\"yawRadians\":" << yawRadians << ",\"pitchRadians\":"
-                 << pitchRadians << ",\"rollRadians\":" << rollRadians
-                 << ",\"vehicleType\":\"" << status.vehicleType << "\",\"systemStatus\":\""
-                 << status.systemStatus << "\",\"batteryPercentage\":"
-                 << status.batteryPercentage << ",\"batteryVoltage\":"
-                 << status.batteryVoltage << ",\"batteryCurrentMilliAmps\":"
-                 << status.batteryCurrentMilliAmps
-                 << ",\"networkType\":\"" << metrics.networkType << "\",\"quality\":\""
-                 << metrics.quality << "\",\"servingLabel\":\"" << metrics.servingLabel
-                 << "\",\"security\":\"" << m_security.name << "\",\"distanceMeters\":"
-                 << metrics.distanceMeters << ",\"pingMs\":" << metrics.pingMs << ",\"jitterMs\":"
-                 << metrics.jitterMs << ",\"throughputMbps\":" << metrics.throughputMbps
-                 << ",\"packetLossPct\":" << metrics.packetLossPct << ",\"rssiDbm\":"
-                 << metrics.rssiDbm << ",\"rsrpDbm\":" << metrics.rsrpDbm << ",\"rsrqDb\":"
-                 << metrics.rsrqDb << ",\"sinrDb\":" << metrics.sinrDb << "}";
+            if (compactSnapshot)
+            {
+                json << "{\"id\":" << i << ",\"label\":\"UAV-" << std::setw(3)
+                     << std::setfill('0') << i + 1 << "\",\"latitude\":"
+                     << coordinate.latitude << ",\"longitude\":" << coordinate.longitude
+                     << ",\"altitudeMeters\":" << position.z << ",\"headingDegrees\":"
+                     << headingDegrees << ",\"yawRadians\":" << yawRadians
+                     << ",\"pitchRadians\":" << pitchRadians << ",\"rollRadians\":"
+                     << rollRadians << ",\"networkType\":\"" << metrics.networkType
+                     << "\",\"quality\":\"" << metrics.quality
+                     << "\",\"servingLabel\":\"" << metrics.servingLabel
+                     << "\",\"security\":\"" << m_security.name
+                     << "\",\"distanceMeters\":" << metrics.distanceMeters
+                     << ",\"pingMs\":" << metrics.pingMs << ",\"jitterMs\":"
+                     << metrics.jitterMs << ",\"throughputMbps\":"
+                     << metrics.throughputMbps << ",\"packetLossPct\":"
+                     << metrics.packetLossPct << ",\"rssiDbm\":" << metrics.rssiDbm
+                     << ",\"rsrpDbm\":" << metrics.rsrpDbm << ",\"rsrqDb\":"
+                     << metrics.rsrqDb << ",\"sinrDb\":" << metrics.sinrDb << "}";
+            }
+            else
+            {
+                json << "{\"id\":" << i << ",\"label\":\"UAV-" << std::setw(3)
+                     << std::setfill('0') << i + 1 << "\",\"latitude\":"
+                     << coordinate.latitude << ",\"longitude\":" << coordinate.longitude
+                     << ",\"altitudeMeters\":" << position.z << ",\"headingDegrees\":"
+                     << headingDegrees << ",\"yawRadians\":" << yawRadians
+                     << ",\"pitchRadians\":" << pitchRadians << ",\"rollRadians\":"
+                     << rollRadians << ",\"vehicleType\":\"" << status.vehicleType
+                     << "\",\"systemStatus\":\"" << status.systemStatus
+                     << "\",\"batteryPercentage\":" << status.batteryPercentage
+                     << ",\"batteryVoltage\":" << status.batteryVoltage
+                     << ",\"batteryCurrentMilliAmps\":"
+                     << status.batteryCurrentMilliAmps << ",\"networkType\":\""
+                     << metrics.networkType << "\",\"quality\":\"" << metrics.quality
+                     << "\",\"servingLabel\":\"" << metrics.servingLabel
+                     << "\",\"security\":\"" << m_security.name
+                     << "\",\"distanceMeters\":" << metrics.distanceMeters
+                     << ",\"pingMs\":" << metrics.pingMs << ",\"jitterMs\":"
+                     << metrics.jitterMs << ",\"throughputMbps\":"
+                     << metrics.throughputMbps << ",\"packetLossPct\":"
+                     << metrics.packetLossPct << ",\"rssiDbm\":" << metrics.rssiDbm
+                     << ",\"rsrpDbm\":" << metrics.rsrpDbm << ",\"rsrqDb\":"
+                     << metrics.rsrqDb << ",\"sinrDb\":" << metrics.sinrDb << "}";
+            }
         }
         json << "]}";
 
         const std::string payload = json.str();
-        for (const sockaddr_in& address : m_destinations)
-        {
-            sendto(m_socket,
-                   payload.data(),
-                   payload.size(),
-                   0,
-                   reinterpret_cast<const sockaddr*>(&address),
-                   sizeof(address));
-        }
+        PublishPayload(payload);
     }
 
   private:
+    void PublishPayload(const std::string& payload) const
+    {
+        if (payload.size() <= kMaxSnapshotChunkPayloadBytes)
+        {
+            for (const sockaddr_in& address : m_destinations)
+            {
+                const auto sentBytes = sendto(m_socket,
+                                              payload.data(),
+                                              payload.size(),
+                                              0,
+                                              reinterpret_cast<const sockaddr*>(&address),
+                                              sizeof(address));
+                if (sentBytes < 0)
+                {
+                    std::perror("sendto");
+                    std::cerr << "[ns3-live] failed to publish snapshot bytes=" << payload.size()
+                              << " port=" << ntohs(address.sin_port) << '\n';
+                }
+            }
+            return;
+        }
+
+        const uint32_t messageId = ++m_nextSnapshotMessageId;
+        const uint16_t chunkCount = static_cast<uint16_t>(
+            (payload.size() + kMaxSnapshotChunkPayloadBytes - 1) / kMaxSnapshotChunkPayloadBytes);
+
+        for (uint16_t chunkIndex = 0; chunkIndex < chunkCount; ++chunkIndex)
+        {
+            const std::size_t offset = static_cast<std::size_t>(chunkIndex) * kMaxSnapshotChunkPayloadBytes;
+            const std::size_t chunkSize =
+                std::min(kMaxSnapshotChunkPayloadBytes, payload.size() - offset);
+
+            std::string datagram;
+            datagram.reserve(4 + 4 + 2 + 2 + 4 + 4 + chunkSize);
+            datagram.append(kSnapshotChunkMagic, sizeof(kSnapshotChunkMagic));
+            AppendUint32(datagram, messageId);
+            AppendUint16(datagram, chunkIndex);
+            AppendUint16(datagram, chunkCount);
+            AppendUint32(datagram, static_cast<uint32_t>(payload.size()));
+            AppendUint32(datagram, static_cast<uint32_t>(chunkSize));
+            datagram.append(payload.data() + offset, chunkSize);
+
+            for (const sockaddr_in& address : m_destinations)
+            {
+                const auto sentBytes = sendto(m_socket,
+                                              datagram.data(),
+                                              datagram.size(),
+                                              0,
+                                              reinterpret_cast<const sockaddr*>(&address),
+                                              sizeof(address));
+                if (sentBytes < 0)
+                {
+                    std::perror("sendto");
+                    std::cerr << "[ns3-live] failed to publish snapshot chunk bytes="
+                              << datagram.size() << " chunk=" << (chunkIndex + 1) << '/'
+                              << chunkCount << " payload_bytes=" << payload.size()
+                              << " port=" << ntohs(address.sin_port) << '\n';
+                }
+            }
+        }
+    }
+
     bool AppendDestination(const std::string& host, uint16_t port)
     {
         sockaddr_in address{};
@@ -592,6 +690,7 @@ class LivePublisher
     mutable bool m_enabled = false;
     mutable int m_socket = -1;
     mutable std::vector<sockaddr_in> m_destinations;
+    mutable uint32_t m_nextSnapshotMessageId = 0;
     std::string m_scenarioId;
     std::string m_runId;
     SecurityProfile m_security;
@@ -714,7 +813,10 @@ ResolveSecurityProfile(const std::string& requested, uint32_t overrideOverhead, 
 }
 
 std::string
-FlowTypeForTuple(const Ipv4FlowClassifier::FiveTuple& tuple, uint16_t telemetryPort)
+FlowTypeForTuple(const Ipv4FlowClassifier::FiveTuple& tuple,
+                 uint16_t telemetryPort,
+                 uint16_t videoBasePort,
+                 uint32_t videoStreamUavs)
 {
     if (tuple.destinationPort == telemetryPort)
     {
@@ -723,6 +825,18 @@ FlowTypeForTuple(const Ipv4FlowClassifier::FiveTuple& tuple, uint16_t telemetryP
     if (tuple.sourcePort == telemetryPort)
     {
         return "telemetry-downlink";
+    }
+    if (videoStreamUavs > 0
+        && tuple.destinationPort >= videoBasePort
+        && tuple.destinationPort < static_cast<uint32_t>(videoBasePort) + videoStreamUavs)
+    {
+        return "video-uplink";
+    }
+    if (videoStreamUavs > 0
+        && tuple.sourcePort >= videoBasePort
+        && tuple.sourcePort < static_cast<uint32_t>(videoBasePort) + videoStreamUavs)
+    {
+        return "video-downlink";
     }
     return "control-downlink";
 }
@@ -738,7 +852,9 @@ WriteCsvSummary(const std::string& path,
                 double simTimeSeconds,
                 Ptr<Ipv4FlowClassifier> classifier,
                 const FlowMonitor::FlowStatsContainer& stats,
-                uint16_t telemetryPort)
+                uint16_t telemetryPort,
+                uint16_t videoBasePort,
+                uint32_t videoStreamUavs)
 {
     std::filesystem::create_directories(std::filesystem::path(path).parent_path());
 
@@ -756,7 +872,8 @@ WriteCsvSummary(const std::string& path,
     for (const auto& [flowId, stat] : stats)
     {
         const auto tuple = classifier->FindFlow(flowId);
-        const auto flowType = FlowTypeForTuple(tuple, telemetryPort);
+        const auto flowType =
+            FlowTypeForTuple(tuple, telemetryPort, videoBasePort, videoStreamUavs);
         const double duration =
             std::max(1e-9, (stat.timeLastRxPacket - stat.timeFirstTxPacket).GetSeconds());
         const double throughputMbps = stat.rxBytes * 8.0 / duration / 1e6;
@@ -866,6 +983,10 @@ WriteRunMetadata(const std::string& path,
                  double baseStationOverlapSpacingMinMeters,
                  double baseStationOverlapSpacingMaxMeters,
                  const NodeContainer& baseStationsNodes,
+                 uint32_t videoStreamUavs,
+                 double videoBitrateMbps,
+                 uint32_t videoPayloadBytes,
+                 uint16_t videoBasePort,
                  const std::string& csvPath,
                  const std::string& linkModelCsvPath,
                  const std::string& syncMethod,
@@ -896,6 +1017,12 @@ WriteRunMetadata(const std::string& path,
              << baseStationOverlapSpacingMinMeters << ",\n"
              << "  \"base_station_overlap_spacing_max_m\": "
              << baseStationOverlapSpacingMaxMeters << ",\n"
+             << "  \"video_equivalent_traffic_enabled\": "
+             << (videoStreamUavs > 0 && videoBitrateMbps > 0.0 ? "true" : "false") << ",\n"
+             << "  \"video_equivalent_stream_uavs\": " << videoStreamUavs << ",\n"
+             << "  \"video_equivalent_bitrate_mbps\": " << videoBitrateMbps << ",\n"
+             << "  \"video_equivalent_payload_bytes\": " << videoPayloadBytes << ",\n"
+             << "  \"video_equivalent_base_port\": " << videoBasePort << ",\n"
              << "  \"security_overhead_bytes\": " << security.overheadBytes << ",\n"
              << "  \"security_setup_delay_s\": " << security.setupDelaySeconds << ",\n"
              << "  \"flow_monitor_csv\": \"" << csvPath << "\",\n"
@@ -941,6 +1068,9 @@ main(int argc, char* argv[])
     uint32_t telemetryIntervalMs = 100;
     uint32_t controlPayloadBytes = 96;
     uint32_t controlIntervalMs = 500;
+    uint32_t videoPayloadBytes = 1400;
+    double videoBitrateMbps = 0.0;
+    uint32_t videoStreamUavs = 0;
     std::string securityName = "wireguard";
     uint32_t securityOverheadBytes = 0;
     double securitySetupDelaySeconds = -1.0;
@@ -998,6 +1128,12 @@ main(int argc, char* argv[])
                  controlPayloadBytes);
     cmd.AddValue("controlIntervalMs", "Control emission interval in milliseconds",
                  controlIntervalMs);
+    cmd.AddValue("videoPayload", "Equivalent video payload bytes before security overhead",
+                 videoPayloadBytes);
+    cmd.AddValue("videoBitrateMbps", "Equivalent uplink video bitrate in Mbps per enabled UAV stream",
+                 videoBitrateMbps);
+    cmd.AddValue("videoUavs", "Number of UAVs emitting equivalent video uplink streams",
+                 videoStreamUavs);
     cmd.AddValue("security", "Security overlay: none, tls, wireguard, openvpn", securityName);
     cmd.AddValue("securityOverhead", "Override security overhead bytes", securityOverheadBytes);
     cmd.AddValue("securityDelay", "Override security setup delay in seconds",
@@ -1154,6 +1290,11 @@ main(int argc, char* argv[])
 
     uint16_t telemetryPort = 9000;
     uint16_t controlBasePort = 10000;
+    uint16_t videoBasePort = 11000;
+    const uint32_t activeVideoStreamUavs =
+        videoBitrateMbps > 0.0 ? std::min(videoStreamUavs, uavs) : 0;
+    const uint32_t videoPacketSizeBytes =
+        std::max(256u, videoPayloadBytes + security.overheadBytes);
 
     ApplicationContainer serverApps;
     ApplicationContainer clientApps;
@@ -1182,6 +1323,27 @@ main(int argc, char* argv[])
         controlClient.SetAttribute("PacketSize",
                                    UintegerValue(controlPayloadBytes + security.overheadBytes));
         clientApps.Add(controlClient.Install(remoteHost));
+    }
+
+    for (uint32_t i = 0; i < activeVideoStreamUavs; ++i)
+    {
+        const uint16_t videoPort = videoBasePort + static_cast<uint16_t>(i);
+        PacketSinkHelper videoSink("ns3::UdpSocketFactory",
+                                   InetSocketAddress(Ipv4Address::GetAny(), videoPort));
+        serverApps.Add(videoSink.Install(remoteHost));
+
+        OnOffHelper videoClient("ns3::UdpSocketFactory",
+                                InetSocketAddress(remoteHostAddress, videoPort));
+        videoClient.SetAttribute("OnTime",
+                                 StringValue("ns3::ConstantRandomVariable[Constant=1]"));
+        videoClient.SetAttribute("OffTime",
+                                 StringValue("ns3::ConstantRandomVariable[Constant=0]"));
+        videoClient.SetAttribute(
+            "DataRate",
+            DataRateValue(
+                DataRate(static_cast<uint64_t>(std::llround(videoBitrateMbps * 1000000.0)))));
+        videoClient.SetAttribute("PacketSize", UintegerValue(videoPacketSizeBytes));
+        clientApps.Add(videoClient.Install(ueNodes.Get(i)));
     }
 
     const Time serverStart = Seconds(0.5);
@@ -1261,7 +1423,9 @@ main(int argc, char* argv[])
                     simTimeSeconds,
                     classifier,
                     monitor->GetFlowStats(),
-                    telemetryPort);
+                    telemetryPort,
+                    videoBasePort,
+                    activeVideoStreamUavs);
     WriteLinkModelCsv(linkModelCsvPath,
                       scenarioId,
                       runId,
@@ -1285,6 +1449,10 @@ main(int argc, char* argv[])
                      baseStationOverlapSpacingMinMeters,
                      baseStationOverlapSpacingMaxMeters,
                      enbNodes,
+                     activeVideoStreamUavs,
+                     videoBitrateMbps,
+                     videoPayloadBytes,
+                     videoBasePort,
                      csvPath,
                      linkModelCsvPath,
                      syncMethod,

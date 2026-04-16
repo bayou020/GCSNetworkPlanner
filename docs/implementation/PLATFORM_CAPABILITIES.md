@@ -17,6 +17,8 @@ The desktop application currently provides:
 - live multi-UAV visualization from ns-3
 - antenna markers and coverage circles
 - selected-UAV network banner
+- collision warning and alert overlays for close-proximity UAV pairs
+- rule-based collision avoidance commands emitted over MAVLink for alert states
 - selected-UAV HUD
 - selected-UAV video monitor
 - planner, joystick, and control menus inherited from the original platform

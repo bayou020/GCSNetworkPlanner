@@ -4,6 +4,8 @@
 #include "qtsdljoystick.h"
 #include <QDateTime>
 #include <QVariant>
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace
@@ -72,6 +74,11 @@ QString mavResultName(uint8_t result)
     default:
         return QStringLiteral("result_%1").arg(result);
     }
+}
+
+int clampManualAxisValue(int value)
+{
+    return qBound(-1000, value, 1000);
 }
 
 } // namespace
@@ -833,6 +840,105 @@ void Mavlink_Raw_Message::mavlink_joystick()
     //    qDebug()<<"x real value" <<manual.x;
     //    qDebug()<<"r real value" <<manual.r;
 
+}
+
+void Mavlink_Raw_Message::sendManualControlToSystem(int systemId,
+                                                    int roll,
+                                                    int pitch,
+                                                    int yaw,
+                                                    int throttle,
+                                                    const QString &commandName)
+{
+    const int boundedSystemId = qBound(1, systemId, 250);
+
+    mavlink_message_t message_2d;
+    mavlink_manual_control_t manual {};
+    manual.target = boundedSystemId;
+    manual.y = clampManualAxisValue(roll);
+    manual.x = clampManualAxisValue(pitch);
+    manual.r = clampManualAxisValue(yaw);
+    manual.z = clampManualAxisValue(-throttle);
+    mavlink_msg_manual_control_encode(1, 0, &message_2d, &manual);
+
+    PublicationLogger::instance().logEvent(
+        QStringLiteral("command_tx"),
+        {{QStringLiteral("uav_id"), boundedSystemId},
+         {QStringLiteral("sequence_id"), static_cast<qulonglong>(message_2d.seq)},
+         {QStringLiteral("command_name"),
+          commandName.isEmpty() ? QStringLiteral("manual_control") : commandName},
+         {QStringLiteral("message_name"), mavMessageName(message_2d.msgid)},
+         {QStringLiteral("status"), QStringLiteral("sent")},
+         {QStringLiteral("roll"), static_cast<int>(manual.y)},
+         {QStringLiteral("pitch"), static_cast<int>(manual.x)},
+         {QStringLiteral("yaw"), static_cast<int>(manual.r)},
+         {QStringLiteral("throttle"), -static_cast<int>(manual.z)}});
+
+    dds_mavlink_encode(message_2d);
+}
+
+void Mavlink_Raw_Message::sendCollisionReportToSystem(int systemId,
+                                                      int peerSystemId,
+                                                      double timeToClosestSeconds,
+                                                      double horizontalDistanceMeters,
+                                                      double verticalDistanceMeters,
+                                                      const QString &severity,
+                                                      const QString &actionName)
+{
+    const int boundedSystemId = qBound(1, systemId, 250);
+    const int boundedPeerSystemId = qBound(1, peerSystemId, 250);
+
+    uint8_t threatLevel = MAV_COLLISION_THREAT_LEVEL_NONE;
+    if (severity == QStringLiteral("ALERT"))
+    {
+        threatLevel = MAV_COLLISION_THREAT_LEVEL_HIGH;
+    }
+    else if (severity == QStringLiteral("WARNING"))
+    {
+        threatLevel = MAV_COLLISION_THREAT_LEVEL_LOW;
+    }
+
+    uint8_t action = MAV_COLLISION_ACTION_REPORT;
+    if (actionName == QStringLiteral("ASCEND_OR_DESCEND"))
+    {
+        action = MAV_COLLISION_ACTION_ASCEND_OR_DESCEND;
+    }
+    else if (actionName == QStringLiteral("COMBINED"))
+    {
+        action = MAV_COLLISION_ACTION_MOVE_HORIZONTALLY;
+    }
+    else if (actionName == QStringLiteral("MOVE_HORIZONTALLY"))
+    {
+        action = MAV_COLLISION_ACTION_MOVE_HORIZONTALLY;
+    }
+
+    mavlink_message_t message_2d;
+    mavlink_collision_t collision {};
+    collision.src = MAV_COLLISION_SRC_MAVLINK_GPS_GLOBAL_INT;
+    collision.id = static_cast<uint32_t>(boundedPeerSystemId);
+    collision.action = action;
+    collision.threat_level = threatLevel;
+    collision.time_to_minimum_delta =
+        timeToClosestSeconds >= 0.0 ? static_cast<float>(timeToClosestSeconds) : 0.0f;
+    collision.altitude_minimum_delta = static_cast<float>(std::abs(verticalDistanceMeters));
+    collision.horizontal_minimum_delta =
+        static_cast<float>(std::max(0.0, horizontalDistanceMeters));
+    mavlink_msg_collision_encode(1, 0, &message_2d, &collision);
+
+    PublicationLogger::instance().logEvent(
+        QStringLiteral("collision_report_tx"),
+        {{QStringLiteral("uav_id"), boundedSystemId},
+         {QStringLiteral("peer_uav_id"), boundedPeerSystemId},
+         {QStringLiteral("message_name"), mavMessageName(message_2d.msgid)},
+         {QStringLiteral("status"), QStringLiteral("sent")},
+         {QStringLiteral("severity"), severity},
+         {QStringLiteral("collision_action"), actionName},
+         {QStringLiteral("time_to_minimum_delta_s"), collision.time_to_minimum_delta},
+         {QStringLiteral("horizontal_minimum_delta_m"),
+          collision.horizontal_minimum_delta},
+         {QStringLiteral("altitude_minimum_delta_m"),
+          collision.altitude_minimum_delta}});
+
+    dds_mavlink_encode(message_2d);
 }
 
 void Mavlink_Raw_Message::setManualControlEnabled(bool enabled)
