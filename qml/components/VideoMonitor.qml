@@ -13,6 +13,11 @@ Item {
     property int droppedFrames: 0
     property int receivedFrames: 0
     property int frameAgeMs: -1
+    readonly property int expandedHeight: 328
+    readonly property int compactHeight: 154
+    readonly property int expandedPreviewHeight: 188
+    readonly property int compactPreviewHeight: 92
+    readonly property bool compactMode: !hasFrame
 
     readonly property var metricTiles: [
         {"name": "FPS", "value": hasFrame ? receiveFps.toFixed(1) : "--"},
@@ -25,7 +30,7 @@ Item {
 
     width: 440
     implicitWidth: 440
-    implicitHeight: 328
+    implicitHeight: compactMode ? compactHeight : expandedHeight
     clip: true
 
     Rectangle {
@@ -82,7 +87,7 @@ Item {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: 188
+            Layout.preferredHeight: compactMode ? compactPreviewHeight : expandedPreviewHeight
             radius: 16
             color: "#0d1823"
             border.color: "#112333"
@@ -109,7 +114,7 @@ Item {
                 Text {
                     text: "No simulated video yet"
                     color: "#f2f8fc"
-                    font.pixelSize: 14
+                    font.pixelSize: compactMode ? 13 : 14
                     font.bold: true
                     horizontalAlignment: Text.AlignHCenter
                 }
@@ -117,7 +122,7 @@ Item {
                 Text {
                     text: "Start the live ns-3 + RPi wrapper"
                     color: "#9db7c8"
-                    font.pixelSize: 11
+                    font.pixelSize: compactMode ? 10 : 11
                     horizontalAlignment: Text.AlignHCenter
                 }
             }
@@ -126,6 +131,7 @@ Item {
         GridLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
+            visible: hasFrame
             columns: 3
             rowSpacing: 8
             columnSpacing: 8

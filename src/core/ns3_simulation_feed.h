@@ -3,12 +3,15 @@
 
 #include <QAbstractListModel>
 #include <QElapsedTimer>
+#include <QHash>
 #include <QJsonObject>
 #include <QObject>
+#include <QSet>
 #include <QTimer>
 #include <QUdpSocket>
 #include <QVariantMap>
 #include <QVariantList>
+#include <QVector>
 
 class Ns3SnapshotListModel : public QAbstractListModel
 {
@@ -54,9 +57,22 @@ class Ns3SimulationFeed : public QObject
     Q_PROPERTY(int selectedUavId READ selectedUavId NOTIFY selectedUavChanged)
     Q_PROPERTY(bool hasSelectedUav READ hasSelectedUav NOTIFY selectedUavChanged)
     Q_PROPERTY(QVariantMap selectedUav READ selectedUav NOTIFY selectedUavChanged)
+    Q_PROPERTY(int collisionWarningCount READ collisionWarningCount NOTIFY collisionStatusChanged)
+    Q_PROPERTY(int collisionAlertCount READ collisionAlertCount NOTIFY collisionStatusChanged)
+    Q_PROPERTY(QString collisionBannerSeverity READ collisionBannerSeverity NOTIFY collisionStatusChanged)
+    Q_PROPERTY(QString collisionBannerText READ collisionBannerText NOTIFY collisionStatusChanged)
+    Q_PROPERTY(QVariantList collisionPairs READ collisionPairs NOTIFY collisionStatusChanged)
     Q_PROPERTY(QString errorString READ errorString NOTIFY errorChanged)
 
 public:
+    struct PendingChunkedSnapshot
+    {
+        quint32 messageId = 0;
+        int totalSize = 0;
+        int receivedChunks = 0;
+        QVector<QByteArray> chunks;
+    };
+
     explicit Ns3SimulationFeed(QObject *parent = nullptr);
 
     bool listening() const;
@@ -75,6 +91,11 @@ public:
     int selectedUavId() const;
     bool hasSelectedUav() const;
     QVariantMap selectedUav() const;
+    int collisionWarningCount() const;
+    int collisionAlertCount() const;
+    QString collisionBannerSeverity() const;
+    QString collisionBannerText() const;
+    QVariantList collisionPairs() const;
     QString errorString() const;
 
     Q_INVOKABLE bool startListening(quint16 port = 0);
@@ -99,6 +120,8 @@ signals:
     void uavsChanged();
     void altitudeRangeChanged();
     void selectedUavChanged();
+    void collisionStatusChanged();
+    void collisionAvoidanceRequested(const QVariantList &commands);
     void errorChanged();
 
 private slots:
@@ -106,8 +129,32 @@ private slots:
     void applyPendingSnapshot();
 
 private:
-    void refreshUavDisplayState();
+    struct CollisionPolicy
+    {
+        double warningEnterMeters = 10.0;
+        double warningExitMeters = 12.0;
+        double alertEnterMeters = 6.0;
+        double alertExitMeters = 8.0;
+        double safetyAxisEnterMeters = 5.0;
+        double safetyAxisExitMeters = 6.0;
+        int avoidanceIntervalMs = 350;
+        int commandMagnitude = 760;
+        int commandFloor = 220;
+        bool sendMavlinkReport = true;
+    };
+
+    struct PreviousUavSample
+    {
+        double latitude = 0.0;
+        double longitude = 0.0;
+        double altitudeMeters = 0.0;
+        double simTimeSeconds = -1.0;
+        bool valid = false;
+    };
+
+    void refreshUavDisplayState(double simTimeSeconds = -1.0);
     void refreshAltitudeRange();
+    void refreshCollisionState(QVariantList &displayUavs, double simTimeSeconds);
     void applySnapshot(const QJsonObject &snapshot);
     void setListening(bool value);
     void setHasData(bool value);
@@ -117,6 +164,8 @@ private:
     void setErrorString(const QString &value);
     void refreshSelectedUav();
     void setSelectedUavState(int id, const QVariantMap &data);
+    void resetCollisionTrackingState(bool emitStatusSignal = false);
+    void logCollisionPolicyOnce();
 
     QUdpSocket m_socket;
     bool m_listening = false;
@@ -133,6 +182,11 @@ private:
     double m_maxAltitudeMeters = 0.0;
     int m_selectedUavId = -1;
     QVariantMap m_selectedUav;
+    int m_collisionWarningCount = 0;
+    int m_collisionAlertCount = 0;
+    QString m_collisionBannerSeverity;
+    QString m_collisionBannerText;
+    QVariantList m_collisionPairs;
     QString m_errorString;
     int m_manualControlSystemId = -1;
     int m_manualRoll = 0;
@@ -142,9 +196,17 @@ private:
     bool m_manualControlActive = false;
     QElapsedTimer m_snapshotApplyElapsed;
     QTimer m_snapshotApplyTimer;
-    QJsonObject m_pendingSnapshot;
+    QByteArray m_pendingSnapshotPayload;
     bool m_hasPendingSnapshot = false;
     int m_snapshotUiUpdateMs = 100;
+    PendingChunkedSnapshot m_pendingChunkedSnapshot;
+    CollisionPolicy m_collisionPolicy;
+    bool m_collisionPolicyLogged = false;
+    QHash<int, PreviousUavSample> m_previousUavSamples;
+    QHash<QString, QString> m_previousPairSeverities;
+    QHash<int, QVariantMap> m_lastAutoAvoidanceCommand;
+    QHash<int, qint64> m_lastAutoAvoidanceCommandMs;
+    QSet<int> m_activeAutoAvoidanceSystems;
 };
 
 #endif // NS3_SIMULATION_FEED_H

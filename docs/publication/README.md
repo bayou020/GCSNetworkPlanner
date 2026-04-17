@@ -25,3 +25,15 @@ They define:
 - how runs must be named and logged
 - how raw logs become analysis-ready datasets
 - what is still required before journal submission
+
+## Maintained Live Preset
+
+For dense live validation runs used for figures, demos, and pipeline checks, use:
+
+```bash
+source ./env
+WITH_RPI=1 RAT=lte UAVS=100 BASE_STATIONS=4 SIM_TIME=120 SECURITY=openvpn \
+./sim/ns3/scripts/run_live_network_planner_100x4.sh
+```
+
+The wrapper now derives a denser visualization profile automatically for large fleets. That improves figure capture and operator-facing smoothness without changing the ns-3 export schema.

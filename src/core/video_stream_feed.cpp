@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <utility>
 
 #include <QDataStream>
 #include <QDateTime>
@@ -11,7 +12,8 @@
 namespace
 {
 
-constexpr char kPacketMagic[] = {'N', 'P', 'V', '1'};
+constexpr char kPacketMagicV1[] = {'N', 'P', 'V', '1'};
+constexpr char kPacketMagicV2[] = {'N', 'P', 'V', '2'};
 constexpr quint16 kDefaultVideoPort = 5600;
 
 } // namespace
@@ -168,43 +170,10 @@ void VideoStreamFeed::setSelectedUavId(int id)
 
 void VideoStreamFeed::processPendingDatagrams()
 {
-    while (m_socket.hasPendingDatagrams())
+    const auto applyCompleteFrame =
+        [this](int uavId, int width, int height, quint32 sequence, const QByteArray &jpegFrame)
     {
-        const QNetworkDatagram datagram = m_socket.receiveDatagram();
-        QDataStream stream(datagram.data());
-        stream.setByteOrder(QDataStream::BigEndian);
-
-        char magic[4] = {};
-        if (stream.readRawData(magic, 4) != 4 || std::memcmp(magic, kPacketMagic, 4) != 0)
-        {
-            setErrorString(tr("Ignoring malformed simulated video datagram."));
-            continue;
-        }
-
-        quint16 uavId = 0;
-        quint16 width = 0;
-        quint16 height = 0;
-        quint32 sequence = 0;
-        quint32 timestampMs = 0;
-        quint32 payloadSize = 0;
-        stream >> uavId >> width >> height >> sequence >> timestampMs >> payloadSize;
-        Q_UNUSED(timestampMs);
-
-        if (payloadSize == 0 || payloadSize > 60000)
-        {
-            setErrorString(tr("Ignoring simulated video datagram with an invalid payload size."));
-            continue;
-        }
-
-        QByteArray jpegFrame;
-        jpegFrame.resize(static_cast<int>(payloadSize));
-        if (stream.readRawData(jpegFrame.data(), static_cast<int>(payloadSize)) != static_cast<int>(payloadSize))
-        {
-            setErrorString(tr("Ignoring truncated simulated video datagram."));
-            continue;
-        }
-
-        UavVideoState &state = m_states[static_cast<int>(uavId)];
+        UavVideoState &state = m_states[uavId];
         if (state.lastSequence != 0 && sequence > state.lastSequence + 1)
         {
             state.droppedFrames += static_cast<int>(sequence - state.lastSequence - 1);
@@ -222,7 +191,9 @@ void VideoStreamFeed::processPendingDatagrams()
             state.receiveTimes.dequeue();
         }
 
-        if (static_cast<int>(uavId) == m_selectedUavId)
+        state.pendingFrame = UavVideoState::PendingFrame();
+
+        if (uavId == m_selectedUavId)
         {
             refreshFrameUrl(state);
         }
@@ -232,10 +203,140 @@ void VideoStreamFeed::processPendingDatagrams()
             qInfo() << "VideoStreamFeed received first frame for UAV" << uavId;
         }
 
-        if (static_cast<int>(uavId) == m_selectedUavId)
+        if (uavId == m_selectedUavId)
         {
             emit selectedFrameChanged();
         }
+    };
+
+    while (m_socket.hasPendingDatagrams())
+    {
+        const QNetworkDatagram datagram = m_socket.receiveDatagram();
+        QDataStream stream(datagram.data());
+        stream.setByteOrder(QDataStream::BigEndian);
+
+        char magic[4] = {};
+        if (stream.readRawData(magic, 4) != 4)
+        {
+            setErrorString(tr("Ignoring malformed simulated video datagram."));
+            continue;
+        }
+
+        const bool isPacketV1 = std::memcmp(magic, kPacketMagicV1, 4) == 0;
+        const bool isPacketV2 = std::memcmp(magic, kPacketMagicV2, 4) == 0;
+        if (!isPacketV1 && !isPacketV2)
+        {
+            setErrorString(tr("Ignoring malformed simulated video datagram."));
+            continue;
+        }
+
+        quint16 uavId = 0;
+        quint16 width = 0;
+        quint16 height = 0;
+        quint32 sequence = 0;
+        quint32 timestampMs = 0;
+        stream >> uavId >> width >> height >> sequence >> timestampMs;
+        Q_UNUSED(timestampMs);
+
+        if (isPacketV1)
+        {
+            quint32 payloadSize = 0;
+            stream >> payloadSize;
+
+            if (payloadSize == 0 || payloadSize > 60000)
+            {
+                setErrorString(tr("Ignoring simulated video datagram with an invalid payload size."));
+                continue;
+            }
+
+            QByteArray jpegFrame;
+            jpegFrame.resize(static_cast<int>(payloadSize));
+            if (stream.readRawData(jpegFrame.data(), static_cast<int>(payloadSize))
+                != static_cast<int>(payloadSize))
+            {
+                setErrorString(tr("Ignoring truncated simulated video datagram."));
+                continue;
+            }
+
+            applyCompleteFrame(static_cast<int>(uavId),
+                               static_cast<int>(width),
+                               static_cast<int>(height),
+                               sequence,
+                               jpegFrame);
+            continue;
+        }
+
+        quint32 totalSize = 0;
+        quint16 chunkIndex = 0;
+        quint16 chunkCount = 0;
+        quint32 chunkSize = 0;
+        stream >> totalSize >> chunkIndex >> chunkCount >> chunkSize;
+
+        if (totalSize == 0 || totalSize > 2 * 1024 * 1024 || chunkCount == 0
+            || chunkIndex >= chunkCount || chunkSize == 0 || chunkSize > 60000)
+        {
+            setErrorString(tr("Ignoring simulated video datagram with invalid chunk metadata."));
+            continue;
+        }
+
+        QByteArray chunkData;
+        chunkData.resize(static_cast<int>(chunkSize));
+        if (stream.readRawData(chunkData.data(), static_cast<int>(chunkSize))
+            != static_cast<int>(chunkSize))
+        {
+            setErrorString(tr("Ignoring truncated simulated video datagram."));
+            continue;
+        }
+
+        UavVideoState &state = m_states[static_cast<int>(uavId)];
+        UavVideoState::PendingFrame &pending = state.pendingFrame;
+        if (pending.sequence != sequence || pending.totalSize != static_cast<int>(totalSize)
+            || pending.chunks.size() != chunkCount)
+        {
+            pending = UavVideoState::PendingFrame();
+            pending.sequence = sequence;
+            pending.width = static_cast<int>(width);
+            pending.height = static_cast<int>(height);
+            pending.totalSize = static_cast<int>(totalSize);
+            pending.chunks.resize(chunkCount);
+        }
+
+        if (pending.chunks[chunkIndex].isEmpty())
+        {
+            pending.receivedChunks += 1;
+        }
+        pending.chunks[chunkIndex] = chunkData;
+
+        if (pending.receivedChunks < pending.chunks.size())
+        {
+            continue;
+        }
+
+        QByteArray jpegFrame;
+        jpegFrame.reserve(pending.totalSize);
+        bool complete = true;
+        for (const QByteArray &chunk : std::as_const(pending.chunks))
+        {
+            if (chunk.isEmpty())
+            {
+                complete = false;
+                break;
+            }
+            jpegFrame.append(chunk);
+        }
+
+        if (!complete || jpegFrame.size() != pending.totalSize)
+        {
+            state.pendingFrame = UavVideoState::PendingFrame();
+            setErrorString(tr("Ignoring incomplete simulated video frame."));
+            continue;
+        }
+
+        applyCompleteFrame(static_cast<int>(uavId),
+                           pending.width,
+                           pending.height,
+                           sequence,
+                           jpegFrame);
     }
 }
 

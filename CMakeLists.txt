@@ -126,12 +126,22 @@ get_target_property(QMAPLIBRE_GEOSERVICES_PLUGIN
 get_filename_component(QMAPLIBRE_PLUGIN_DIR "${QMAPLIBRE_GEOSERVICES_PLUGIN}" DIRECTORY)
 get_filename_component(QMAPLIBRE_PLUGIN_DIR "${QMAPLIBRE_PLUGIN_DIR}" DIRECTORY)
 
+if(TARGET QMapLibre::PluginQmlLocation)
+    set(QMAPLIBRE_QML_PLUGIN_TARGET QMapLibre::PluginQmlLocation)
+elseif(TARGET QMapLibre::PluginQml)
+    set(QMAPLIBRE_QML_PLUGIN_TARGET QMapLibre::PluginQml)
+else()
+    message(FATAL_ERROR "QMapLibre QML plugin target was not found in the installed package.")
+endif()
+
 get_target_property(QMAPLIBRE_QML_PLUGIN
-    QMapLibre::PluginQmlLocation
+    ${QMAPLIBRE_QML_PLUGIN_TARGET}
     "IMPORTED_LOCATION_${QMAPLIBRE_IMPORTED_CONFIGURATION}")
 get_filename_component(QMAPLIBRE_QML_IMPORT_PATH "${QMAPLIBRE_QML_PLUGIN}" DIRECTORY)
 get_filename_component(QMAPLIBRE_QML_IMPORT_PATH "${QMAPLIBRE_QML_IMPORT_PATH}" DIRECTORY)
-get_filename_component(QMAPLIBRE_QML_IMPORT_PATH "${QMAPLIBRE_QML_IMPORT_PATH}" DIRECTORY)
+if(QMAPLIBRE_QML_PLUGIN_TARGET STREQUAL "QMapLibre::PluginQmlLocation")
+    get_filename_component(QMAPLIBRE_QML_IMPORT_PATH "${QMAPLIBRE_QML_IMPORT_PATH}" DIRECTORY)
+endif()
 
 get_target_property(QMAPLIBRE_CORE_LIBRARY QMapLibre::Core LOCATION)
 get_filename_component(QMAPLIBRE_LIBRARY_DIR "${QMAPLIBRE_CORE_LIBRARY}" DIRECTORY)

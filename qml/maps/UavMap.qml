@@ -70,28 +70,96 @@ Item {
         }
     }
 
-    function maybeCenterOnSimulation() {
-        if (simulationCentered
+    function simulationBounds() {
+        if (typeof simulationFeed === "undefined"
+                || simulationFeed === null
+                || !simulationFeed.hasData) {
+            return null
+        }
+
+        let minLatitude = Infinity
+        let maxLatitude = -Infinity
+        let minLongitude = Infinity
+        let maxLongitude = -Infinity
+
+        const appendBounds = function(items) {
+            for (let i = 0; i < items.length; ++i) {
+                const entry = items[i]
+                const latitude = Number(entry.latitude)
+                const longitude = Number(entry.longitude)
+                if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+                    continue
+                }
+
+                minLatitude = Math.min(minLatitude, latitude)
+                maxLatitude = Math.max(maxLatitude, latitude)
+                minLongitude = Math.min(minLongitude, longitude)
+                maxLongitude = Math.max(maxLongitude, longitude)
+            }
+        }
+
+        appendBounds(simulationFeed.antennas)
+        appendBounds(simulationFeed.uavs)
+
+        if (!Number.isFinite(minLatitude) || !Number.isFinite(minLongitude)) {
+            return null
+        }
+
+        return {
+            "minLatitude": minLatitude,
+            "maxLatitude": maxLatitude,
+            "minLongitude": minLongitude,
+            "maxLongitude": maxLongitude
+        }
+    }
+
+    function zoomLevelForSimulationBounds(bounds) {
+        const latitudeSpan = Math.max(0.0005, bounds.maxLatitude - bounds.minLatitude)
+        const longitudeSpan = Math.max(0.0005, bounds.maxLongitude - bounds.minLongitude)
+        const maxSpan = Math.max(latitudeSpan, longitudeSpan)
+
+        if (maxSpan <= 0.002) {
+            return 15
+        }
+        if (maxSpan <= 0.005) {
+            return 14
+        }
+        if (maxSpan <= 0.01) {
+            return 13
+        }
+        if (maxSpan <= 0.02) {
+            return 12
+        }
+        if (maxSpan <= 0.05) {
+            return 11
+        }
+        if (maxSpan <= 0.1) {
+            return 10
+        }
+        if (maxSpan <= 0.2) {
+            return 9
+        }
+        return 8
+    }
+
+    function maybeCenterOnSimulation(force) {
+        if ((!force && simulationCentered)
                 || typeof simulationFeed === "undefined"
                 || simulationFeed === null
                 || !simulationFeed.hasData) {
             return
         }
 
-        if (simulationFeed.uavs.length > 0) {
-            const firstUav = simulationFeed.uavs[0]
-            map.center = QtPositioning.coordinate(firstUav.latitude, firstUav.longitude)
-            map.zoomLevel = Math.max(map.zoomLevel, 12)
-            simulationCentered = true
+        const bounds = simulationBounds()
+        if (bounds === null) {
             return
         }
 
-        if (simulationFeed.antennas.length > 0) {
-            const firstAntenna = simulationFeed.antennas[0]
-            map.center = QtPositioning.coordinate(firstAntenna.latitude, firstAntenna.longitude)
-            map.zoomLevel = Math.max(map.zoomLevel, 11)
-            simulationCentered = true
-        }
+        const centerLatitude = (bounds.minLatitude + bounds.maxLatitude) * 0.5
+        const centerLongitude = (bounds.minLongitude + bounds.maxLongitude) * 0.5
+        map.center = QtPositioning.coordinate(centerLatitude, centerLongitude)
+        map.zoomLevel = zoomLevelForSimulationBounds(bounds)
+        simulationCentered = true
     }
 
     function mapCoordinateFromPoint(point) {
@@ -246,16 +314,15 @@ Item {
     property var weatherOverlaySourceParam: null
     property var weatherOverlayLayerParam: null
     property bool simulationCentered: false
+    property real lastSimulationTime: -1
+    property bool denseSimulation: typeof simulationFeed !== "undefined"
+                                   && simulationFeed !== null
+                                   && simulationFeed.uavCount >= 50
+    property int densePositionAnimationMs: denseSimulation ? 85 : 260
+    property int denseHeadingAnimationMs: denseSimulation ? 120 : 220
 
 
     anchors.fill: parent
-
-
-    PositionSource
-    {
-        active: true
-        onPositionChanged: {}
-    }
 
     Planner {
         id:planner
@@ -279,11 +346,32 @@ Item {
         target: typeof simulationFeed !== "undefined" ? simulationFeed : null
 
         function onUavsChanged() {
-            root.maybeCenterOnSimulation()
+            const forceRecenter = simulationFeed.simTime <= 1.0
+                    || (root.lastSimulationTime >= 0
+                        && simulationFeed.simTime + 0.001 < root.lastSimulationTime)
+            root.maybeCenterOnSimulation(forceRecenter)
         }
 
         function onAntennasChanged() {
-            root.maybeCenterOnSimulation()
+            const forceRecenter = simulationFeed.simTime <= 1.0
+                    || (root.lastSimulationTime >= 0
+                        && simulationFeed.simTime + 0.001 < root.lastSimulationTime)
+            root.maybeCenterOnSimulation(forceRecenter)
+        }
+
+        function onSimTimeChanged() {
+            if (root.lastSimulationTime >= 0
+                    && simulationFeed.simTime + 0.001 < root.lastSimulationTime) {
+                root.simulationCentered = false
+            }
+            root.lastSimulationTime = simulationFeed.simTime
+        }
+
+        function onHasDataChanged() {
+            if (!simulationFeed.hasData) {
+                root.simulationCentered = false
+                root.lastSimulationTime = -1
+            }
         }
 
         function onErrorChanged() {
@@ -529,6 +617,7 @@ Item {
                 property bool selected: typeof simulationFeed !== "undefined"
                                         && simulationFeed !== null
                                         && simulationFeed.selectedUavId === modelData.id
+                property bool denseMarker: root.denseSimulation && !selected
                 property real latitude: modelData.latitude !== undefined
                                         ? Number(modelData.latitude) : 0
                 property real longitude: modelData.longitude !== undefined
@@ -537,41 +626,57 @@ Item {
                                               ? Number(modelData.altitudeMeters) : 0
                 property real headingDegrees: modelData.headingDegrees !== undefined
                                               ? Number(modelData.headingDegrees) : 0
-                property var projection: root.altitudeProjection(altitudeMeters)
-                property real elevationOffset: root.altitudeElevationOffset(altitudeMeters)
-                property bool showAltitudeIndicator: map.tilt >= 60 && map.zoomLevel >= 4
+                property string collisionSeverity: modelData.collisionSeverity !== undefined
+                                                  ? String(modelData.collisionSeverity) : "SAFE"
+                property var projection: denseMarker
+                                         ? {"x": 0, "y": 0, "tiltNorm": 0}
+                                         : root.altitudeProjection(altitudeMeters)
+                property real elevationOffset: denseMarker
+                                               ? 0
+                                               : root.altitudeElevationOffset(altitudeMeters)
+                property bool showAltitudeIndicator: !denseMarker
+                                                    && map.tilt >= 60
+                                                    && map.zoomLevel >= 4
+                property color collisionAccent: collisionSeverity === "ALERT"
+                                                ? "#ff3355"
+                                                : (collisionSeverity === "WARNING"
+                                                   ? "#ffb300"
+                                                   : "#6f9bbd")
                 autoFadeIn: false
                 coordinate: QtPositioning.coordinate(latitude, longitude, altitudeMeters)
-                anchorPoint.x: uavMarkerBody.width * 0.5
-                anchorPoint.y: groundAnchor.y
+                anchorPoint.x: denseMarker ? 16 : uavMarkerBody.width * 0.5
+                anchorPoint.y: denseMarker ? 16 : groundAnchor.y
                 zoomLevel: map.zoomLevel
-                z: selected ? 40 : 25
+                z: selected ? 40 : (denseMarker ? 18 : 25)
 
                 Behavior on latitude {
+                    enabled: !denseMarker && root.densePositionAnimationMs > 0
                     NumberAnimation {
-                        duration: 420
+                        duration: root.densePositionAnimationMs
                         easing.type: Easing.InOutQuad
                     }
                 }
 
                 Behavior on longitude {
+                    enabled: !denseMarker && root.densePositionAnimationMs > 0
                     NumberAnimation {
-                        duration: 420
+                        duration: root.densePositionAnimationMs
                         easing.type: Easing.InOutQuad
                     }
                 }
 
                 Behavior on headingDegrees {
+                    enabled: !denseMarker && root.denseHeadingAnimationMs > 0
                     NumberAnimation {
-                        duration: 260
+                        duration: root.denseHeadingAnimationMs
                         easing.type: Easing.OutCubic
                     }
                 }
 
                 sourceItem: Item {
                     id: uavMarkerBody
-                    width: 92
-                    height: 184
+                    width: denseMarker ? 32 : 92
+                    height: denseMarker ? 32 : 184
 
                     readonly property real groundCenterX: groundAnchor.x + groundAnchor.width * 0.5
                     readonly property real groundCenterY: groundAnchor.y + groundAnchor.height * 0.5
@@ -589,53 +694,132 @@ Item {
                     readonly property real shadowHeight: Math.max(5, shadowWidth * (0.38 - projectedTilt * 0.08))
 
                     Rectangle {
+                        visible: denseMarker
+                        anchors.centerIn: parent
+                        width: selected ? 30 : 24
+                        height: width
+                        radius: width / 2
+                        color: selected ? "#55ffd54f"
+                                        : (collisionSeverity === "ALERT"
+                                           ? "#66ff3355"
+                                           : (collisionSeverity === "WARNING"
+                                              ? "#66ffb300"
+                                              : "#55153242"))
+                        border.color: selected ? "#ffd54f" : collisionAccent
+                        border.width: selected ? 2 : 1
+                    }
+
+                    Image {
+                        id: denseUavImage
+                        visible: denseMarker
+                        anchors.centerIn: parent
+                        width: selected ? 20 : 16
+                        height: width
+                        sourceSize.width: width
+                        sourceSize.height: height
+                        fillMode: Image.PreserveAspectFit
+                        smooth: false
+                        mipmap: false
+                        source: "qrc:/ico/drone_i.ico"
+
+                        transform: Rotation {
+                            origin.x: denseUavImage.width / 2
+                            origin.y: denseUavImage.height / 2
+                            angle: headingDegrees
+                        }
+                    }
+
+                    Rectangle {
+                        visible: denseMarker && selected
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.bottom: parent.top
+                        anchors.bottomMargin: 4
+                        color: "#dd174762"
+                        radius: 7
+                        height: 18
+                        width: Math.max(54, denseUavLabel.implicitWidth + 12)
+
+                        Text {
+                            id: denseUavLabel
+                            anchors.centerIn: parent
+                            color: "white"
+                            font.pixelSize: 10
+                            font.bold: true
+                            text: modelData.label
+                        }
+                    }
+
+                    Rectangle {
+                        visible: !denseMarker
                         x: uavMarkerBody.groundCenterX - width * 0.5 - uavMarkerBody.projectedX * 0.16
                         y: uavMarkerBody.groundCenterY - height * 0.5 - Math.max(0, uavMarkerBody.projectedY) * 0.08
                         width: uavMarkerBody.shadowWidth
                         height: uavMarkerBody.shadowHeight
                         radius: height / 2
-                        color: selected ? "#88ffd54f" : "#7a22384a"
+                        color: selected ? "#88ffd54f"
+                                        : (collisionSeverity === "ALERT"
+                                           ? "#88ff3355"
+                                           : (collisionSeverity === "WARNING"
+                                              ? "#88ffb300"
+                                              : "#7a22384a"))
                         opacity: 0.88 - uavMarkerBody.projectedTilt * 0.18
                     }
 
                     Rectangle {
                         id: groundAnchor
+                        visible: !denseMarker
                         anchors.horizontalCenter: parent.horizontalCenter
                         anchors.bottom: parent.bottom
                         anchors.bottomMargin: 8
                         width: 10
                         height: 10
                         radius: 5
-                        color: selected ? "#ffd54f" : "#d2141d28"
-                        border.color: selected ? "#ffd54f" : "#58758a"
+                        color: selected ? "#ffd54f"
+                                        : (collisionSeverity === "ALERT"
+                                           ? "#ff3355"
+                                           : (collisionSeverity === "WARNING"
+                                              ? "#ffb300"
+                                              : "#d2141d28"))
+                        border.color: selected ? "#ffd54f" : collisionAccent
                         border.width: 1.5
                     }
 
                     Rectangle {
+                        visible: !denseMarker
                         x: uavMarkerBody.groundCenterX - width * 0.5
                         y: uavMarkerBody.groundCenterY - height
                         width: selected ? 4 : 3
                         height: uavMarkerBody.stemLength
                         radius: width / 2
-                        color: selected ? "#ffd54f" : "#7693a9"
+                        color: selected ? "#ffd54f" : collisionAccent
                         opacity: 0.82
                         rotation: uavMarkerBody.stemAngle
                         transformOrigin: Item.Bottom
                     }
 
                     Rectangle {
+                        visible: !denseMarker
                         x: liveUavImage.x + liveUavImage.width * 0.5 - width * 0.5
                         y: liveUavImage.y + liveUavImage.height - height
                         width: 44
                         height: 44
                         radius: 22
-                        color: selected ? "#55ffd54f" : "transparent"
-                        border.color: selected ? "#ffd54f" : "transparent"
-                        border.width: selected ? 2 : 0
+                        color: selected ? "#55ffd54f"
+                                        : (collisionSeverity === "ALERT"
+                                           ? "#22ff3355"
+                                           : (collisionSeverity === "WARNING"
+                                              ? "#22ffb300"
+                                              : "transparent"))
+                        border.color: selected ? "#ffd54f"
+                                               : (collisionSeverity === "SAFE"
+                                                  ? "transparent"
+                                                  : collisionAccent)
+                        border.width: selected ? 2 : (collisionSeverity === "SAFE" ? 0 : 2)
                     }
 
                     Image {
                         id: liveUavImage
+                        visible: !denseMarker
                         sourceSize.width: 40
                         sourceSize.height: 40
                         width: 40
@@ -662,9 +846,14 @@ Item {
                     }
 
                     Rectangle {
+                        visible: !denseMarker
                         x: uavMarkerBody.droneCenterX - width * 0.5
                         y: liveUavImage.y - height - 6
-                        color: "#dd174762"
+                        color: collisionSeverity === "ALERT"
+                               ? "#dd8b1624"
+                               : (collisionSeverity === "WARNING"
+                                  ? "#dd7a4e00"
+                                  : "#dd174762")
                         radius: 8
                         height: 20
                         width: Math.max(42, uavLabel.implicitWidth + 14)
@@ -683,8 +872,13 @@ Item {
                         x: uavMarkerBody.droneCenterX - width * 0.5
                         y: liveUavImage.y - height - 30
                         visible: showAltitudeIndicator
-                        color: selected ? "#d2ffd54f" : "#c5223440"
-                        border.color: selected ? "#ffe082" : "#6f9bbd"
+                        color: selected ? "#d2ffd54f"
+                                        : (collisionSeverity === "ALERT"
+                                           ? "#c58b1624"
+                                           : (collisionSeverity === "WARNING"
+                                              ? "#c57a4e00"
+                                              : "#c5223440"))
+                        border.color: selected ? "#ffe082" : collisionAccent
                         border.width: 1
                         radius: 7
                         height: 18

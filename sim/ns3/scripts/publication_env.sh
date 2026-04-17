@@ -22,6 +22,48 @@ derive_publication_defaults() {
   export NP_RUN_ID="${NP_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 }
 
+derive_live_visualization_defaults() {
+  local uavs="$1"
+  local with_rpi="${2:-0}"
+  local dense_threshold=50
+
+  if [[ -z "${LIVE_INTERVAL_MS:-}" ]]; then
+    if (( uavs >= dense_threshold )); then
+      export LIVE_INTERVAL_MS=75
+    else
+      export LIVE_INTERVAL_MS=100
+    fi
+  fi
+
+  if [[ -z "${NP_GCS_NS3_UI_UPDATE_MS:-}" ]]; then
+    if (( uavs >= dense_threshold )); then
+      export NP_GCS_NS3_UI_UPDATE_MS=50
+    else
+      export NP_GCS_NS3_UI_UPDATE_MS=75
+    fi
+  fi
+
+  if [[ "$with_rpi" != "1" ]]; then
+    return
+  fi
+
+  if [[ -z "${NPRPI_NS3_GPS_INTERVAL_MS:-}" ]]; then
+    if (( uavs >= dense_threshold )); then
+      export NPRPI_NS3_GPS_INTERVAL_MS=100
+    else
+      export NPRPI_NS3_GPS_INTERVAL_MS=125
+    fi
+  fi
+
+  if [[ -z "${NPRPI_NS3_ATTITUDE_INTERVAL_MS:-}" ]]; then
+    if (( uavs >= dense_threshold )); then
+      export NPRPI_NS3_ATTITUDE_INTERVAL_MS=100
+    else
+      export NPRPI_NS3_ATTITUDE_INTERVAL_MS=125
+    fi
+  fi
+}
+
 run_log_dir() {
   printf '%s/raw/%s/%s' "${NP_LOG_ROOT:?}" "${NP_SCENARIO_ID:?}" "${NP_RUN_ID:?}"
 }

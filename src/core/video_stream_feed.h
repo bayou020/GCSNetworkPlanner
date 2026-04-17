@@ -5,6 +5,7 @@
 #include <QHash>
 #include <QQueue>
 #include <QUdpSocket>
+#include <QVector>
 
 class VideoStreamFeed : public QObject
 {
@@ -56,6 +57,16 @@ private slots:
 private:
     struct UavVideoState
     {
+        struct PendingFrame
+        {
+            quint32 sequence = 0;
+            int width = 0;
+            int height = 0;
+            int totalSize = 0;
+            int receivedChunks = 0;
+            QVector<QByteArray> chunks;
+        };
+
         QByteArray jpegFrame;
         QString frameUrl;
         quint32 lastSequence = 0;
@@ -65,6 +76,7 @@ private:
         int height = 0;
         qint64 lastReceivedMs = 0;
         QQueue<qint64> receiveTimes;
+        PendingFrame pendingFrame;
     };
 
     void setListening(bool value);

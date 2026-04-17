@@ -20,6 +20,36 @@ This is a practical impairment model, not a full RTP or RTSP stack embedded dire
 
 That gives you a practical way to study perceived video quality under varying cellular conditions without implementing a full media protocol stack inside the simulator first.
 
+## 4K-equivalent channel traffic
+
+The local JPEG preview path is not a valid way to claim that ns-3 carried a real 4K media stream. For channel-capacity experiments, the repository now also supports a separate `4K-equivalent` application-traffic mode inside ns-3 itself.
+
+That mode:
+
+- adds a constant-rate UDP uplink flow from selected UAVs to the remote host
+- records the flow in FlowMonitor CSV output as `video-uplink`
+- propagates the configuration into run metadata
+
+It does not pretend to be a full RTP, H.264, or H.265 media stack. It is an equivalent traffic load model for channel-stress experiments.
+
+Default maintained profile:
+
+- `VIDEO_BITRATE_MBPS=25`
+- `VIDEO_PAYLOAD_BYTES=1400`
+- `VIDEO_STREAM_UAVS=1`
+
+Example:
+
+```bash
+cd /home/boots/work/phd/GCSNetworkPlanner
+source ./env
+START_GCS=0 WITH_RPI=0 RAT=lte UAVS=20 BASE_STATIONS=4 SIM_TIME=120 SECURITY=openvpn \
+VIDEO_STREAM_UAVS=1 VIDEO_BITRATE_MBPS=25 VIDEO_PAYLOAD_BYTES=1400 \
+./sim/ns3/scripts/run_live_4k_equivalent.sh
+```
+
+The resulting FlowMonitor CSV will contain a `video-uplink` flow type that can be analyzed separately from telemetry and control.
+
 ## Environment variables
 
 Shared GCS/RPi video endpoint:
@@ -158,3 +188,23 @@ If the stream is too stable for testing:
 - reduce `BASE_STATIONS`
 - raise `NPRPI_VIDEO_WIDTH`, `NPRPI_VIDEO_HEIGHT`, or `NPRPI_VIDEO_FPS`
 - choose a heavier `SECURITY` profile such as `openvpn`
+
+## Dense live profile
+
+For publication-oriented dense live runs, the maintained wrappers now derive more aggressive but still stable defaults automatically when `UAVS >= 50`:
+
+- `LIVE_INTERVAL_MS=75`
+- `NP_GCS_NS3_UI_UPDATE_MS=50`
+- `NPRPI_NS3_GPS_INTERVAL_MS=100`
+- `NPRPI_NS3_ATTITUDE_INTERVAL_MS=100`
+
+Recommended command:
+
+```bash
+cd /home/boots/work/phd/GCSNetworkPlanner
+source ./env
+WITH_RPI=1 RAT=lte UAVS=100 BASE_STATIONS=4 SIM_TIME=120 SECURITY=openvpn \
+./sim/ns3/scripts/run_live_network_planner_100x4.sh
+```
+
+On macOS, keep the simulated video at the default `320x180` unless you are explicitly testing video stress. That is the most reliable local profile for long dense runs.

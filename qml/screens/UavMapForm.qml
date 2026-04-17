@@ -1313,14 +1313,48 @@ Item
 
     FlightHud {
         id: flightHud
-        anchors.top: parent.top
-        anchors.topMargin: 8
-        anchors.right: parent.right
-        anchors.rightMargin: 8
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: 18
         headingDegrees: item1.flightHeadingDeg
         pitchDegrees: item1.flightPitchDeg
         rollDegrees: item1.flightRollDeg
         altitudeMeters: item1.flightAltitudeMeters
+    }
+
+    Rectangle {
+        id: collisionBanner
+        anchors.top: parent.top
+        anchors.topMargin: 12
+        anchors.right: parent.right
+        anchors.rightMargin: 16
+        width: Math.min(520, collisionBannerText.implicitWidth + 28)
+        height: 42
+        radius: 14
+        border.color: "black"
+        border.width: 2
+        color: typeof simulationFeed !== "undefined"
+               && simulationFeed !== null
+               && simulationFeed.collisionBannerSeverity === "ALERT"
+               ? "#d93025"
+               : "#ffb300"
+        opacity: 0.92
+        visible: typeof simulationFeed !== "undefined"
+                 && simulationFeed !== null
+                 && simulationFeed.collisionBannerText !== ""
+
+        Text {
+            id: collisionBannerText
+            anchors.centerIn: parent
+            width: parent.width - 20
+            color: "white"
+            font.bold: true
+            font.pixelSize: 15
+            horizontalAlignment: Text.AlignHCenter
+            elide: Text.ElideRight
+            text: typeof simulationFeed !== "undefined" && simulationFeed !== null
+                  ? simulationFeed.collisionBannerText : ""
+        }
     }
 
     VideoMonitor {
@@ -1804,10 +1838,19 @@ Item
         item1.windowNetwork    = componentNetwork.createObject(item1)
         item1.windowNetwork.anchors.right = item1.right
         item1.windowNetwork.anchors.rightMargin = 16
-        item1.windowNetwork.anchors.top = flightHud.bottom
-        item1.windowNetwork.anchors.topMargin = 10
-        item1.windowNetwork.anchors.bottom = videoMonitor.top
-        item1.windowNetwork.anchors.bottomMargin = 10
+        item1.windowNetwork.anchors.top = Qt.binding(function() {
+            return collisionBanner.visible ? collisionBanner.bottom : item1.top
+        })
+        item1.windowNetwork.anchors.topMargin = Qt.binding(function() {
+            return collisionBanner.visible ? 8 : 16
+        })
+        item1.windowNetwork.height = Qt.binding(function() {
+            const topY = collisionBanner.visible
+                         ? (collisionBanner.y + collisionBanner.height + 8)
+                         : 16
+            const available = Math.max(220, videoMonitor.y - topY - 10)
+            return Math.min(available, item1.windowNetwork.preferredPanelHeight)
+        })
         item1.windowNetwork.visible = false
         item1.sendNetworkIcons.connect(item1.windowNetwork.getNetworkParameters)
         item1.guiQMLLTEParameters.connect(item1.windowNetwork.getLteParameters)
