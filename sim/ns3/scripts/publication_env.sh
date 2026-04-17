@@ -14,6 +14,7 @@ derive_publication_defaults() {
 
   export NP_RAT="${NP_RAT:-$rat}"
   export NP_SECURITY_PROFILE="${NP_SECURITY_PROFILE:-$security}"
+  export NP_EXECUTION_MODE="${NP_EXECUTION_MODE:-pure_simulator}"
   export NP_SYNC_METHOD="${NP_SYNC_METHOD:-unspecified}"
   export NP_RNG_RUN="${NP_RNG_RUN:-1}"
   export NP_LOG_ROOT="${NP_LOG_ROOT:-$default_log_root}"

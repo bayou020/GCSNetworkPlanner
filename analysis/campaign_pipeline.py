@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,40 @@ from publication_pipeline import (
     write_csv,
     write_json,
 )
+
+CAMPAIGN_PIPELINE_FINGERPRINT = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()[:16]
+
+PUBLICATION_GATE_DEFAULTS = {
+    "require_all_expected_pairs": True,
+    "require_all_holdout_pairs": True,
+    "minimum_metric_overlap_per_pair": 3,
+    "minimum_comparable_metric_overlap_per_pair": 3,
+    "require_simulator_export_rows": True,
+    "require_field_ground_truth_rows": True,
+    "require_configured_field_sync": True,
+    "require_real_hardware_field_execution": True,
+    "require_sim_link_model_export": True,
+}
+
+DEV_GATE_DEFAULTS = {
+    "require_all_expected_pairs": False,
+    "require_all_holdout_pairs": False,
+    "minimum_metric_overlap_per_pair": 1,
+    "minimum_comparable_metric_overlap_per_pair": 0,
+    "require_simulator_export_rows": True,
+    "require_field_ground_truth_rows": False,
+    "require_configured_field_sync": False,
+    "require_real_hardware_field_execution": False,
+    "require_sim_link_model_export": False,
+}
+
+
+def campaign_pipeline_metadata(stage: str) -> dict[str, Any]:
+    return {
+        "stage": stage,
+        "fingerprint": CAMPAIGN_PIPELINE_FINGERPRINT,
+        "script": Path(__file__).name,
+    }
 
 
 def parse_args() -> argparse.Namespace:
@@ -71,7 +106,10 @@ def event_file_presence(raw_run_dir: Path) -> dict[str, bool]:
     return {
         "has_gcs_logs": {"gcs_events.jsonl", "gcs_metadata.json"}.issubset(files),
         "has_rpi_logs": {"rpi_bridge_events.jsonl", "rpi_bridge_metadata.json"}.issubset(files),
-        "has_ns3_exports": any(name.endswith("_flow_monitor.csv") for name in files)
+        "has_ns3_flow_monitor": any(name.endswith("_flow_monitor.csv") and name.startswith("ns3_") for name in files),
+        "has_ns3_link_model": any(name.endswith("_link_model.csv") and name.startswith("ns3_") for name in files),
+        "has_ns3_metadata": any(name.endswith("_metadata.json") and name.startswith("ns3_") for name in files),
+        "has_ns3_exports": any(name.endswith("_flow_monitor.csv") and name.startswith("ns3_") for name in files)
         and any(name.endswith("_metadata.json") and name.startswith("ns3_") for name in files),
     }
 
@@ -90,20 +128,30 @@ def make_markdown_table(rows: list[dict[str, Any]], columns: list[tuple[str, str
     return "\n".join(lines) + "\n"
 
 
-def recommendation_from_inventory(
-    config: dict[str, Any], inventory_rows: list[dict[str, Any]]
+def resolved_quality_gates(config: dict[str, Any], profile: str) -> dict[str, Any]:
+    defaults = DEV_GATE_DEFAULTS if profile == "dev" else PUBLICATION_GATE_DEFAULTS
+    overrides = config.get("dev_quality_gates", {}) if profile == "dev" else config.get("quality_gates", {})
+    return {**defaults, **overrides}
+
+
+def readiness_assessment_from_inventory(
+    config: dict[str, Any], inventory_rows: list[dict[str, Any]], profile: str
 ) -> dict[str, Any]:
-    gates = config.get("quality_gates", {})
+    gates = resolved_quality_gates(config, profile)
     require_all_expected_pairs = bool(gates.get("require_all_expected_pairs", True))
     require_all_holdout_pairs = bool(gates.get("require_all_holdout_pairs", True))
     minimum_metric_overlap = int(gates.get("minimum_metric_overlap_per_pair", 1))
     minimum_comparable_overlap = int(gates.get("minimum_comparable_metric_overlap_per_pair", 0))
 
     reasons: list[str] = []
+    warnings: list[str] = []
     total_pairs = len(inventory_rows)
     completed_pairs = [row for row in inventory_rows if row["status"] == "complete"]
     holdout_rows = [row for row in inventory_rows if row["split"] == "holdout"]
     completed_holdout_rows = [row for row in holdout_rows if row["status"] == "complete"]
+
+    if not completed_pairs:
+        reasons.append("no complete pairs are available")
 
     if require_all_expected_pairs and len(completed_pairs) != total_pairs:
         reasons.append(
@@ -139,8 +187,12 @@ def recommendation_from_inventory(
         for row in completed_pairs
         if int(row.get("sim_simulator_export_rows") or 0) <= 0
     ]
-    if sim_evidence_gaps:
+    if sim_evidence_gaps and bool(gates.get("require_simulator_export_rows", True)):
         reasons.append(
+            f"pairs missing simulator_export rows in sim summaries: {', '.join(sim_evidence_gaps)}"
+        )
+    elif sim_evidence_gaps:
+        warnings.append(
             f"pairs missing simulator_export rows in sim summaries: {', '.join(sim_evidence_gaps)}"
         )
 
@@ -149,8 +201,12 @@ def recommendation_from_inventory(
         for row in completed_pairs
         if int(row.get("field_field_ground_truth_rows") or 0) <= 0
     ]
-    if field_evidence_gaps:
+    if field_evidence_gaps and bool(gates.get("require_field_ground_truth_rows", True)):
         reasons.append(
+            f"pairs missing field_ground_truth rows in field summaries: {', '.join(field_evidence_gaps)}"
+        )
+    elif field_evidence_gaps:
+        warnings.append(
             f"pairs missing field_ground_truth rows in field summaries: {', '.join(field_evidence_gaps)}"
         )
 
@@ -160,25 +216,69 @@ def recommendation_from_inventory(
         if str(row.get("field_scenario_id", "")).startswith("field-")
         and row.get("field_sync_status") != "configured"
     ]
-    if field_sync_gaps:
+    if field_sync_gaps and bool(gates.get("require_configured_field_sync", True)):
         reasons.append(
             f"pairs missing configured field sync metadata: {', '.join(field_sync_gaps)}"
         )
+    elif field_sync_gaps:
+        warnings.append(
+            f"pairs missing configured field sync metadata: {', '.join(field_sync_gaps)}"
+        )
 
-    recommendation = {
+    non_hardware_field_pairs = [
+        row["pair_id"]
+        for row in completed_pairs
+        if str(row.get("field_scenario_id", "")).startswith("field-")
+        and row.get("field_execution_mode")
+        and row.get("field_execution_mode") != "real_hardware_field"
+    ]
+    if non_hardware_field_pairs and bool(gates.get("require_real_hardware_field_execution", True)):
+        reasons.append(
+            "pairs whose field side is not real_hardware_field: "
+            + ", ".join(non_hardware_field_pairs)
+        )
+    elif non_hardware_field_pairs:
+        warnings.append(
+            "pairs whose field side is not real_hardware_field: "
+            + ", ".join(non_hardware_field_pairs)
+        )
+
+    missing_sim_link_model_pairs = [
+        row["pair_id"]
+        for row in completed_pairs
+        if str(row.get("sim_scenario_id", "")).startswith("sim-")
+        and str(row.get("sim_link_model_export_status") or "") != "present"
+    ]
+    if missing_sim_link_model_pairs and bool(gates.get("require_sim_link_model_export", True)):
+        reasons.append(
+            "pairs missing sim link-model export: " + ", ".join(missing_sim_link_model_pairs)
+        )
+    elif missing_sim_link_model_pairs:
+        warnings.append(
+            "pairs missing sim link-model export: " + ", ".join(missing_sim_link_model_pairs)
+        )
+
+    assessment = {
         "campaign_name": config["campaign_name"],
+        "readiness_profile": profile,
         "generated_at_utc": utc_now(),
-        "quality_gates": {
-            "require_all_expected_pairs": require_all_expected_pairs,
-            "require_all_holdout_pairs": require_all_holdout_pairs,
-            "minimum_metric_overlap_per_pair": minimum_metric_overlap,
-            "minimum_comparable_metric_overlap_per_pair": minimum_comparable_overlap,
-        },
-        "scale_up_recommended": not reasons,
-        "status": "ready_to_scale" if not reasons else "not_ready",
+        "pipeline": campaign_pipeline_metadata("campaign_assessment"),
+        "quality_gates": gates,
+        "ready": not reasons,
+        "scale_up_recommended": not reasons if profile == "publication" else False,
+        "status": (
+            "ready_for_development"
+            if profile == "dev" and not reasons
+            else "ready_to_scale"
+            if profile == "publication" and not reasons
+            else "development_blocked"
+            if profile == "dev"
+            else "not_ready"
+        ),
         "reasons": reasons or ["all configured campaign gates passed"],
+        "warnings": warnings,
     }
-    return recommendation
+    return assessment
 
 
 def process_campaign(config: dict[str, Any], write_parquet: bool) -> Path:
@@ -213,9 +313,13 @@ def process_campaign(config: dict[str, Any], write_parquet: bool) -> Path:
             "field_has_gcs_logs": False,
             "field_has_rpi_logs": False,
             "field_has_ns3_exports": False,
+            "field_has_ns3_flow_monitor": False,
+            "field_has_ns3_link_model": False,
             "sim_has_gcs_logs": False,
             "sim_has_rpi_logs": False,
             "sim_has_ns3_exports": False,
+            "sim_has_ns3_flow_monitor": False,
+            "sim_has_ns3_link_model": False,
             "field_row_count": "",
             "sim_row_count": "",
             "field_sources": "",
@@ -223,6 +327,16 @@ def process_campaign(config: dict[str, Any], write_parquet: bool) -> Path:
             "field_field_ground_truth_rows": "",
             "field_ui_only_rows": "",
             "sim_simulator_export_rows": "",
+            "field_execution_mode": "",
+            "field_execution_source": "",
+            "field_execution_issues": "",
+            "sim_execution_mode": "",
+            "sim_execution_source": "",
+            "sim_execution_issues": "",
+            "sim_link_model_export_status": "",
+            "sim_link_model_export_issues": "",
+            "field_freshness_status": "",
+            "sim_freshness_status": "",
             "comparison_metric_count": "",
             "comparison_metrics": "",
             "comparable_metric_count": "",
@@ -265,9 +379,13 @@ def process_campaign(config: dict[str, Any], write_parquet: bool) -> Path:
                     "field_has_gcs_logs": field_presence["has_gcs_logs"],
                     "field_has_rpi_logs": field_presence["has_rpi_logs"],
                     "field_has_ns3_exports": field_presence["has_ns3_exports"],
+                    "field_has_ns3_flow_monitor": field_presence["has_ns3_flow_monitor"],
+                    "field_has_ns3_link_model": field_presence["has_ns3_link_model"],
                     "sim_has_gcs_logs": sim_presence["has_gcs_logs"],
                     "sim_has_rpi_logs": sim_presence["has_rpi_logs"],
                     "sim_has_ns3_exports": sim_presence["has_ns3_exports"],
+                    "sim_has_ns3_flow_monitor": sim_presence["has_ns3_flow_monitor"],
+                    "sim_has_ns3_link_model": sim_presence["has_ns3_link_model"],
                 }
             )
 
@@ -299,6 +417,22 @@ def process_campaign(config: dict[str, Any], write_parquet: bool) -> Path:
                     "sim_simulator_export_rows": sim_summary.get("notes", {}).get(
                         "simulator_export_rows", ""
                     ),
+                    "field_execution_mode": field_summary.get("execution", {}).get("mode", "") or "",
+                    "field_execution_source": field_summary.get("execution", {}).get("source", "") or "",
+                    "field_execution_issues": ",".join(field_summary.get("execution", {}).get("issues", [])),
+                    "sim_execution_mode": sim_summary.get("execution", {}).get("mode", "") or "",
+                    "sim_execution_source": sim_summary.get("execution", {}).get("source", "") or "",
+                    "sim_execution_issues": ",".join(sim_summary.get("execution", {}).get("issues", [])),
+                    "sim_link_model_export_status": (
+                        "present"
+                        if sim_summary.get("sim_export_readiness", {}).get("has_link_model_csv")
+                        else "missing"
+                    ),
+                    "sim_link_model_export_issues": ",".join(
+                        sim_summary.get("sim_export_readiness", {}).get("issues", [])
+                    ),
+                    "field_freshness_status": field_summary.get("freshness", {}).get("status", ""),
+                    "sim_freshness_status": sim_summary.get("freshness", {}).get("status", ""),
                     "comparison_metric_count": len(comparison_summary.get("metric_rows", [])),
                     "comparison_metrics": ",".join(
                         row_data["metric"] for row_data in comparison_summary.get("metric_rows", [])
@@ -336,9 +470,13 @@ def process_campaign(config: dict[str, Any], write_parquet: bool) -> Path:
         "field_has_gcs_logs",
         "field_has_rpi_logs",
         "field_has_ns3_exports",
+        "field_has_ns3_flow_monitor",
+        "field_has_ns3_link_model",
         "sim_has_gcs_logs",
         "sim_has_rpi_logs",
         "sim_has_ns3_exports",
+        "sim_has_ns3_flow_monitor",
+        "sim_has_ns3_link_model",
         "field_row_count",
         "sim_row_count",
         "field_sources",
@@ -346,6 +484,16 @@ def process_campaign(config: dict[str, Any], write_parquet: bool) -> Path:
         "field_field_ground_truth_rows",
         "field_ui_only_rows",
         "sim_simulator_export_rows",
+        "field_execution_mode",
+        "field_execution_source",
+        "field_execution_issues",
+        "sim_execution_mode",
+        "sim_execution_source",
+        "sim_execution_issues",
+        "sim_link_model_export_status",
+        "sim_link_model_export_issues",
+        "field_freshness_status",
+        "sim_freshness_status",
         "comparison_metric_count",
         "comparison_metrics",
         "comparable_metric_count",
@@ -392,6 +540,7 @@ def process_campaign(config: dict[str, Any], write_parquet: bool) -> Path:
         "campaign_name": config["campaign_name"],
         "generated_at_utc": utc_now(),
         "config_path": config["_config_path"],
+        "default_readiness_profile": config.get("default_readiness_profile", "publication"),
         "pair_counts": {
             "total": len(inventory_rows),
             "complete": sum(1 for row in inventory_rows if row["status"] == "complete"),
@@ -403,6 +552,9 @@ def process_campaign(config: dict[str, Any], write_parquet: bool) -> Path:
             "field_pairs_with_gcs_logs": sum(1 for row in inventory_rows if row["field_has_gcs_logs"]),
             "field_pairs_with_rpi_logs": sum(1 for row in inventory_rows if row["field_has_rpi_logs"]),
             "sim_pairs_with_ns3_exports": sum(1 for row in inventory_rows if row["sim_has_ns3_exports"]),
+            "sim_pairs_with_link_model_export": sum(
+                1 for row in inventory_rows if row["sim_link_model_export_status"] == "present"
+            ),
         },
         "issues": {
             "pending_pairs": [row["pair_id"] for row in inventory_rows if row["status"] == "pending"],
@@ -427,7 +579,37 @@ def process_campaign(config: dict[str, Any], write_parquet: bool) -> Path:
                 and str(row.get("field_scenario_id", "")).startswith("field-")
                 and row.get("field_sync_status") != "configured"
             ],
+            "pairs_with_non_hardware_field_execution": [
+                row["pair_id"]
+                for row in inventory_rows
+                if row["status"] == "complete"
+                and str(row.get("field_scenario_id", "")).startswith("field-")
+                and row.get("field_execution_mode")
+                and row.get("field_execution_mode") != "real_hardware_field"
+            ],
+            "pairs_missing_sim_link_model_export": [
+                row["pair_id"]
+                for row in inventory_rows
+                if row["status"] == "complete"
+                and str(row.get("sim_scenario_id", "")).startswith("sim-")
+                and row.get("sim_link_model_export_status") != "present"
+            ],
+            "pairs_with_stale_derived_outputs": [
+                row["pair_id"]
+                for row in inventory_rows
+                if row["status"] == "complete"
+                and (
+                    row.get("field_freshness_status") != "current"
+                    or row.get("sim_freshness_status") != "current"
+                )
+            ],
         },
+    }
+    development_readiness = readiness_assessment_from_inventory(config, inventory_rows, "dev")
+    publication_readiness = readiness_assessment_from_inventory(config, inventory_rows, "publication")
+    data_quality_report["readiness"] = {
+        "development": development_readiness,
+        "publication": publication_readiness,
     }
     write_json(campaign_output_dir / "data_quality_report.json", data_quality_report)
     data_quality_markdown = "\n".join(
@@ -446,6 +628,12 @@ def process_campaign(config: dict[str, Any], write_parquet: bool) -> Path:
             f"- field pairs with GCS logs: `{data_quality_report['artifact_coverage']['field_pairs_with_gcs_logs']}`",
             f"- field pairs with RPi logs: `{data_quality_report['artifact_coverage']['field_pairs_with_rpi_logs']}`",
             f"- sim pairs with ns-3 exports: `{data_quality_report['artifact_coverage']['sim_pairs_with_ns3_exports']}`",
+            f"- sim pairs with link-model export: `{data_quality_report['artifact_coverage']['sim_pairs_with_link_model_export']}`",
+            "",
+            "## Readiness",
+            "",
+            f"- development status: `{development_readiness['status']}`",
+            f"- publication status: `{publication_readiness['status']}`",
             "",
             "## Outstanding Issues",
             "",
@@ -455,12 +643,48 @@ def process_campaign(config: dict[str, Any], write_parquet: bool) -> Path:
             f"- pairs without metric overlap: `{', '.join(data_quality_report['issues']['pairs_without_metric_overlap']) or 'none'}`",
             f"- pairs without scientifically comparable metric overlap: `{', '.join(data_quality_report['issues']['pairs_without_comparable_metric_overlap']) or 'none'}`",
             f"- pairs with field sync metadata gaps: `{', '.join(data_quality_report['issues']['pairs_with_field_sync_gaps']) or 'none'}`",
+            f"- pairs with non-hardware field execution: `{', '.join(data_quality_report['issues']['pairs_with_non_hardware_field_execution']) or 'none'}`",
+            f"- pairs missing sim link-model export: `{', '.join(data_quality_report['issues']['pairs_missing_sim_link_model_export']) or 'none'}`",
+            f"- pairs with stale derived outputs: `{', '.join(data_quality_report['issues']['pairs_with_stale_derived_outputs']) or 'none'}`",
             "",
         ]
     )
     (campaign_output_dir / "data_quality_report.md").write_text(data_quality_markdown, encoding="utf-8")
 
-    recommendation = recommendation_from_inventory(config, inventory_rows)
+    write_json(campaign_output_dir / "development_readiness.json", development_readiness)
+    write_json(campaign_output_dir / "publication_readiness.json", publication_readiness)
+
+    def readiness_markdown(assessment: dict[str, Any], title: str) -> str:
+        return "\n".join(
+            [
+                f"# {title}",
+                "",
+                f"- Campaign: `{assessment['campaign_name']}`",
+                f"- Profile: `{assessment['readiness_profile']}`",
+                f"- Status: `{assessment['status']}`",
+                f"- Ready: `{str(assessment['ready']).lower()}`",
+                "",
+                "## Blocking Reasons",
+                "",
+                *[f"- {reason}" for reason in assessment["reasons"]],
+                "",
+                "## Warnings",
+                "",
+                *([f"- {warning}" for warning in assessment.get("warnings", [])] or ["- none"]),
+                "",
+            ]
+        )
+
+    (campaign_output_dir / "development_readiness.md").write_text(
+        readiness_markdown(development_readiness, "Development Readiness"),
+        encoding="utf-8",
+    )
+    (campaign_output_dir / "publication_readiness.md").write_text(
+        readiness_markdown(publication_readiness, "Publication Readiness"),
+        encoding="utf-8",
+    )
+
+    recommendation = publication_readiness
     write_json(campaign_output_dir / "scale_up_recommendation.json", recommendation)
     recommendation_markdown = "\n".join(
         [
@@ -473,6 +697,10 @@ def process_campaign(config: dict[str, Any], write_parquet: bool) -> Path:
             "## Reasons",
             "",
             *[f"- {reason}" for reason in recommendation["reasons"]],
+            "",
+            "## Warnings",
+            "",
+            *([f"- {warning}" for warning in recommendation.get("warnings", [])] or ["- none"]),
             "",
         ]
     )

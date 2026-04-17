@@ -8,6 +8,7 @@ For every run, define:
 - `NP_RUN_ID`
 - `NP_RAT`
 - `NP_SECURITY_PROFILE`
+- `NP_EXECUTION_MODE`
 - `NP_SYNC_METHOD`
 - optional `NP_SYNC_OFFSET_MS`
 - optional `NP_SYNC_NOTE`
@@ -20,8 +21,16 @@ export NP_SCENARIO_ID="sim-lte-2-mob-none-pairA"
 export NP_RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 export NP_RAT="lte"
 export NP_SECURITY_PROFILE="none"
+export NP_EXECUTION_MODE="real_hardware_field"
 export NP_SYNC_METHOD="ntp"
 ```
+
+Use one of:
+
+- `real_hardware_field`
+- `controlled_bridge_proxy`
+- `hybrid_verifier`
+- `pure_simulator`
 
 ## 2. Launch Components With Shared Metadata
 
@@ -63,6 +72,13 @@ If the run is a field run, place `run_manifest.json` in the same directory using
 
 - [analysis/templates/run_manifest.template.json](/home/boots/work/phd/GCSNetworkPlanner/analysis/templates/run_manifest.template.json)
 
+Future mirrored simulator runs should contain both:
+
+- `ns3_*_flow_monitor.csv`
+- `ns3_*_link_model.csv`
+
+Missing `ns3_*_link_model.csv` is now visible in readiness reports and blocks publication readiness for matched simulator comparisons.
+
 ## 4. Normalize Raw Logs
 
 ```bash
@@ -77,6 +93,8 @@ python3 analysis/publication_pipeline.py normalize \
   --raw-run-dir "logs/raw/$NP_SCENARIO_ID/$NP_RUN_ID" \
   --write-parquet
 ```
+
+The normalization manifest now records a pipeline fingerprint. If a normalized output predates the current pipeline, later stages treat it as stale and require a rebuild from raw logs.
 
 ## 5. Generate Per-Run Summaries
 
@@ -93,12 +111,25 @@ This writes:
 - `telemetry_continuity.csv`
 - `publication_table.md`
 
+The summarizer refuses to reuse normalized outputs whose pipeline fingerprint is stale or missing.
+
 ## 6. Compare Field And Simulation Runs
 
 ```bash
 python3 analysis/publication_pipeline.py compare \
   --field-summary logs/analysis/field-lte-2-mob-none-pairA/<field_run>/run_summary.json \
   --sim-summary logs/analysis/sim-lte-2-mob-none-pairA/<sim_run>/run_summary.json
+```
+
+The comparer likewise requires current run summaries and fails fast on stale summary artifacts.
+
+## 6a. Rebuild Derived Outputs
+
+To rebuild normalized outputs, per-run summaries, pair comparisons, and campaign outputs from raw logs:
+
+```bash
+python3 analysis/rebuild_publication_outputs.py \
+  --campaign-config analysis/templates/small_calibration_campaign.r1.json
 ```
 
 ## 7. What To Use In The Paper
@@ -112,6 +143,8 @@ Use as evidence:
 Do not use as primary evidence:
 
 - `ui_visualization_only` rows unless they are independently corroborated by simulator exports
+
+Controlled proxy or hybrid verifier runs remain useful for development shakeout, but they are not substitutes for real field ground truth in publication mode.
 
 ## 8. Build/Environment Caveat
 

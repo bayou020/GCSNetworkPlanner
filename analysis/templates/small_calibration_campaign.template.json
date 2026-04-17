@@ -5,12 +5,25 @@
   "normalized_root": "logs/normalized",
   "analysis_root": "logs/analysis",
   "output_root": "logs/analysis/campaigns",
+  "default_readiness_profile": "publication",
   "repetitions_per_family": 3,
   "quality_gates": {
     "require_all_expected_pairs": true,
     "require_all_holdout_pairs": true,
     "minimum_metric_overlap_per_pair": 3,
-    "minimum_comparable_metric_overlap_per_pair": 3
+    "minimum_comparable_metric_overlap_per_pair": 3,
+    "require_real_hardware_field_execution": true,
+    "require_configured_field_sync": true,
+    "require_sim_link_model_export": true
+  },
+  "dev_quality_gates": {
+    "require_all_expected_pairs": false,
+    "require_all_holdout_pairs": false,
+    "minimum_metric_overlap_per_pair": 1,
+    "minimum_comparable_metric_overlap_per_pair": 0,
+    "require_configured_field_sync": false,
+    "require_real_hardware_field_execution": false,
+    "require_sim_link_model_export": false
   },
   "families": {
     "calibration": [

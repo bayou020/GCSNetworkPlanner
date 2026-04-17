@@ -71,6 +71,7 @@ ARGS=(
   --metadata="$METADATA_PATH"
   --scenarioId="$NP_SCENARIO_ID"
   --runId="$NP_RUN_ID"
+  --executionMode="$NP_EXECUTION_MODE"
   --syncMethod="$NP_SYNC_METHOD"
   --RngRun="$NP_RNG_RUN"
   --bsHeight="$NS3_NR_BS_HEIGHT"

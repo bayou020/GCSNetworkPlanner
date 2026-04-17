@@ -33,6 +33,10 @@
     "telemetry_interval_ms": 100,
     "control_interval_ms": 500
   },
+  "execution": {
+    "mode": "real_hardware_field",
+    "notes": "Use controlled_bridge_proxy or hybrid_verifier for proxy/verifier runs."
+  },
   "timing": {
     "sync_method": "ntp",
     "sync_offset_ms": 0.0,

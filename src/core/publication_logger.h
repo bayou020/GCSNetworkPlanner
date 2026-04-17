@@ -18,6 +18,7 @@ public:
         QString source;
         QString rat;
         QString securityProfile;
+        QString executionMode;
         QString syncMethod;
         QString syncNote;
         QString runNote;

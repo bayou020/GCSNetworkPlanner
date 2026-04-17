@@ -897,6 +897,7 @@ WriteRunMetadata(const std::string& path,
                  uint32_t controlIntervalMs,
                  const std::string& csvPath,
                  const std::string& linkModelCsvPath,
+                 const std::string& executionMode,
                  const std::string& syncMethod,
                  bool hasSyncOffset,
                  double syncOffsetMs,
@@ -950,6 +951,7 @@ WriteRunMetadata(const std::string& path,
              << "  \"link_model_measurement_family\": \"sim_link_model\",\n"
              << "  \"live_snapshot_metric_origin\": \"snapshot_estimate\",\n"
              << "  \"live_snapshot_evidence_layer\": \"ui_visualization_only\",\n"
+             << "  \"execution_mode\": \"" << executionMode << "\",\n"
              << "  \"sync_method\": \"" << syncMethod << "\",\n";
     WriteNodePositionsJson(metadata, "base_station_positions_m", baseStationsNodes);
     if (hasSyncOffset)
@@ -1015,6 +1017,7 @@ main(int argc, char* argv[])
         SanitizeIdentifier(EnvString("NP_SCENARIO_ID", "unspecified-scenario"), "unspecified-scenario");
     std::string runId = SanitizeIdentifier(EnvString("NP_RUN_ID", CurrentUtcRunId()), CurrentUtcRunId());
     std::string logRoot = EnvString("NP_LOG_ROOT", "logs");
+    std::string executionMode = EnvString("NP_EXECUTION_MODE", "pure_simulator");
     std::string syncMethod = EnvString("NP_SYNC_METHOD", "unspecified");
     std::string syncNote = EnvString("NP_SYNC_NOTE");
     std::string syncOffsetArg = EnvString("NP_SYNC_OFFSET_MS");
@@ -1077,6 +1080,7 @@ main(int argc, char* argv[])
     cmd.AddValue("scenarioId", "Scenario identifier for publication-grade exports", scenarioId);
     cmd.AddValue("runId", "Run identifier for publication-grade exports", runId);
     cmd.AddValue("logRoot", "Root directory for logs/raw and derived outputs", logRoot);
+    cmd.AddValue("executionMode", "Execution-mode classification for this run", executionMode);
     cmd.AddValue("syncMethod", "Clock synchronization method description", syncMethod);
     cmd.AddValue("syncOffsetMs", "Optional clock offset estimate in milliseconds", syncOffsetArg);
     cmd.AddValue("syncNote", "Optional synchronization note", syncNote);
@@ -1390,6 +1394,7 @@ main(int argc, char* argv[])
                      controlIntervalMs,
                      csvPath,
                      linkModelCsvPath,
+                     executionMode,
                      syncMethod,
                      hasSyncOffset,
                      syncOffsetMs,

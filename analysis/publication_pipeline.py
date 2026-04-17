@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import math
 import statistics
@@ -61,6 +62,7 @@ EXTENDED_COLUMNS = [
     "channel",
     "result_code",
     "measurement_family",
+    "execution_mode",
     "link_quality",
     "serving_label",
     "raw_source_file",
@@ -109,6 +111,18 @@ COMPARISON_METRICS = [
     "mean_rsrq_db",
     "mean_sinr_db",
 ]
+PIPELINE_STAGE_VERSIONS = {
+    "normalize": 2,
+    "summarize": 2,
+    "compare": 2,
+}
+PIPELINE_FINGERPRINT = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()[:16]
+KNOWN_EXECUTION_MODES = {
+    "real_hardware_field",
+    "controlled_bridge_proxy",
+    "hybrid_verifier",
+    "pure_simulator",
+}
 
 
 def utc_now() -> str:
@@ -259,6 +273,226 @@ def scenario_parts(scenario_id: str) -> dict[str, Any]:
     return parsed
 
 
+def current_pipeline_metadata(stage: str) -> dict[str, Any]:
+    return {
+        "stage": stage,
+        "version": PIPELINE_STAGE_VERSIONS[stage],
+        "fingerprint": PIPELINE_FINGERPRINT,
+        "script": Path(__file__).name,
+    }
+
+
+def summarize_pipeline_freshness(payload: dict[str, Any], stage: str) -> dict[str, Any]:
+    observed = payload.get("pipeline") or {}
+    issues: list[str] = []
+    if not observed:
+        issues.append("missing_pipeline_metadata")
+    if observed.get("stage") != stage:
+        issues.append(f"unexpected_pipeline_stage:{observed.get('stage') or 'missing'}")
+    if observed.get("version") != PIPELINE_STAGE_VERSIONS[stage]:
+        issues.append(
+            f"pipeline_version_mismatch:{observed.get('version') or 'missing'}"
+        )
+    if observed.get("fingerprint") != PIPELINE_FINGERPRINT:
+        issues.append(
+            f"pipeline_fingerprint_mismatch:{observed.get('fingerprint') or 'missing'}"
+        )
+    return {
+        "stage": stage,
+        "is_current": not issues,
+        "issues": issues,
+        "observed": observed,
+        "expected": current_pipeline_metadata(stage),
+    }
+
+
+def require_current_pipeline_stage(payload: dict[str, Any], stage: str, path: Path) -> dict[str, Any]:
+    freshness = summarize_pipeline_freshness(payload, stage)
+    if not freshness["is_current"]:
+        issue_text = ", ".join(freshness["issues"])
+        raise ValueError(
+            f"stale {stage} artifact at {path}: {issue_text}. rebuild from raw logs before reuse"
+        )
+    return freshness
+
+
+def normalize_execution_mode(value: Any) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip()
+    if not text:
+        return ""
+    canonical = text.lower().replace(" ", "_").replace("-", "_")
+    return canonical if canonical in KNOWN_EXECUTION_MODES else text
+
+
+def manifest_text_blob(run_manifest: dict[str, Any]) -> str:
+    parts: list[str] = []
+
+    def walk(value: Any) -> None:
+        if isinstance(value, dict):
+            for nested in value.values():
+                walk(nested)
+            return
+        if isinstance(value, list):
+            for nested in value:
+                walk(nested)
+            return
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped:
+                parts.append(stripped.lower())
+
+    walk(run_manifest)
+    return " ".join(parts)
+
+
+def infer_execution_mode(
+    scenario_id: str,
+    run_manifest: dict[str, Any],
+    source_metadata: dict[str, Any],
+    rows: list[dict[str, Any]],
+    raw_artifacts: dict[str, Any],
+) -> dict[str, Any]:
+    manifest_execution = run_manifest.get("execution", {}) if isinstance(run_manifest, dict) else {}
+    explicit_manifest_mode = normalize_execution_mode(
+        manifest_execution.get("mode") or run_manifest.get("execution_mode")
+    )
+    if explicit_manifest_mode:
+        return {
+            "mode": explicit_manifest_mode,
+            "source": "run_manifest",
+            "explicit": True,
+            "issues": [],
+        }
+
+    source_modes = sorted(
+        {
+            normalize_execution_mode(metadata.get("execution_mode"))
+            for metadata in source_metadata.values()
+            if normalize_execution_mode(metadata.get("execution_mode"))
+        }
+    )
+    if len(source_modes) == 1:
+        return {
+            "mode": source_modes[0],
+            "source": "source_metadata",
+            "explicit": True,
+            "issues": [],
+        }
+
+    row_modes = sorted(
+        {
+            normalize_execution_mode(row.get("execution_mode"))
+            for row in rows
+            if normalize_execution_mode(row.get("execution_mode"))
+        }
+    )
+    if len(row_modes) == 1:
+        return {
+            "mode": row_modes[0],
+            "source": "event_rows",
+            "explicit": False,
+            "issues": ["execution_mode_inferred_from_event_rows"],
+        }
+
+    scenario = scenario_parts(scenario_id)
+    if scenario.get("domain") == "sim":
+        return {
+            "mode": "pure_simulator",
+            "source": "scenario_domain",
+            "explicit": False,
+            "issues": ["execution_mode_inferred_from_sim_scenario"],
+        }
+
+    text_blob = manifest_text_blob(run_manifest)
+    has_proxy_markers = any(
+        marker in text_blob
+        for marker in (
+            "controlled bridge proxy",
+            "bridge proxy",
+            "proxy run",
+            "simulated-uav-proxy",
+            "proxy",
+        )
+    )
+    has_verifier_markers = any(
+        marker in text_blob
+        for marker in (
+            "verifier",
+            "synthetic_verification",
+            "smoke-test",
+            "smoke test",
+        )
+    )
+    has_simulator_sources = any(name.startswith("ns3_") for name in source_metadata)
+    has_simulator_exports = bool(
+        raw_artifacts.get("has_ns3_flow_monitor_csv")
+        or raw_artifacts.get("has_ns3_link_model_csv")
+        or has_simulator_sources
+        or any(str(row.get("evidence_layer") or "") == "simulator_export" for row in rows)
+    )
+
+    if has_proxy_markers:
+        return {
+            "mode": "controlled_bridge_proxy",
+            "source": "manifest_text",
+            "explicit": False,
+            "issues": ["execution_mode_inferred_from_proxy_markers"],
+        }
+    if has_verifier_markers or has_simulator_exports:
+        return {
+            "mode": "hybrid_verifier",
+            "source": "artifact_inference",
+            "explicit": False,
+            "issues": ["execution_mode_inferred_from_verifier_or_simulator_artifacts"],
+        }
+    if scenario.get("domain") == "field":
+        return {
+            "mode": "real_hardware_field",
+            "source": "scenario_domain",
+            "explicit": False,
+            "issues": ["execution_mode_inferred_from_field_scenario"],
+        }
+    return {
+        "mode": "",
+        "source": "unknown",
+        "explicit": False,
+        "issues": ["execution_mode_unspecified"],
+    }
+
+
+def summarize_sim_export_readiness(
+    scenario_id: str, raw_artifacts: dict[str, Any], source_metadata: dict[str, Any]
+) -> dict[str, Any]:
+    has_flow_monitor_csv = bool(raw_artifacts.get("has_ns3_flow_monitor_csv"))
+    has_link_model_csv = bool(raw_artifacts.get("has_ns3_link_model_csv"))
+    has_metadata_json = bool(raw_artifacts.get("has_ns3_metadata_json")) or any(
+        name.startswith("ns3_") for name in source_metadata
+    )
+    issues: list[str] = []
+    if scenario_parts(scenario_id).get("domain") == "sim":
+        if not has_flow_monitor_csv:
+            issues.append("sim_flow_monitor_export_missing")
+        if not has_link_model_csv:
+            issues.append("sim_link_model_export_missing")
+        if not has_metadata_json:
+            issues.append("sim_metadata_missing")
+    if has_flow_monitor_csv and has_link_model_csv:
+        status = "complete"
+    elif has_flow_monitor_csv or has_link_model_csv or has_metadata_json:
+        status = "partial"
+    else:
+        status = "absent"
+    return {
+        "status": status,
+        "has_flow_monitor_csv": has_flow_monitor_csv,
+        "has_link_model_csv": has_link_model_csv,
+        "has_metadata_json": has_metadata_json,
+        "issues": issues,
+    }
+
+
 def normalize_sync_method(value: Any) -> str:
     if value is None:
         return ""
@@ -384,6 +618,7 @@ def normalize_raw_run(raw_run_dir: Path, normalized_root: Path, write_parquet: b
     normalized_dir = normalized_root / scenario_id / run_id
     rows: list[dict[str, Any]] = []
     source_metadata: dict[str, Any] = {}
+    raw_files = sorted(path.name for path in raw_run_dir.glob("*") if path.is_file())
 
     for path in sorted(raw_run_dir.glob("*_events.jsonl")):
         source_name = path.stem.removesuffix("_events")
@@ -428,6 +663,7 @@ def normalize_raw_run(raw_run_dir: Path, normalized_root: Path, write_parquet: b
                         "evidence_layer": payload.get("evidence_layer", "simulator_export"),
                         "metric_origin": payload.get("metric_origin", "flow_monitor"),
                         "measurement_family": payload.get("measurement_family", "sim_flow_performance"),
+                        "execution_mode": payload.get("execution_mode", "pure_simulator"),
                         "sim_time_s": payload.get("sim_time_s"),
                         "flow_id": payload.get("flow_id"),
                         "flow_type": payload.get("flow_type"),
@@ -465,6 +701,7 @@ def normalize_raw_run(raw_run_dir: Path, normalized_root: Path, write_parquet: b
                         "evidence_layer": payload.get("evidence_layer", "simulator_export"),
                         "metric_origin": payload.get("metric_origin", "link_model"),
                         "measurement_family": payload.get("measurement_family", "sim_link_model"),
+                        "execution_mode": payload.get("execution_mode", "pure_simulator"),
                         "sim_time_s": payload.get("sim_time_s"),
                         "raw_source_file": path.name,
                     }
@@ -487,10 +724,34 @@ def normalize_raw_run(raw_run_dir: Path, normalized_root: Path, write_parquet: b
             parquet_status = f"skipped: {exc}"
 
     run_manifest_path = raw_run_dir / "run_manifest.json"
+    raw_artifacts = {
+        "file_count": len(raw_files),
+        "files": raw_files,
+        "has_run_manifest": run_manifest_path.exists(),
+        "has_gcs_logs": {"gcs_events.jsonl", "gcs_metadata.json"}.issubset(raw_files),
+        "has_rpi_logs": {"rpi_bridge_events.jsonl", "rpi_bridge_metadata.json"}.issubset(raw_files),
+        "has_ns3_flow_monitor_csv": any(name.startswith("ns3_") and name.endswith("_flow_monitor.csv") for name in raw_files),
+        "has_ns3_link_model_csv": any(name.startswith("ns3_") and name.endswith("_link_model.csv") for name in raw_files),
+        "has_ns3_metadata_json": any(name.startswith("ns3_") and name.endswith("_metadata.json") for name in raw_files),
+    }
+    run_manifest = read_json(run_manifest_path) if run_manifest_path.exists() else {}
+    execution_summary = infer_execution_mode(
+        scenario_id,
+        run_manifest,
+        source_metadata,
+        rows,
+        raw_artifacts,
+    )
+    sim_export_readiness = summarize_sim_export_readiness(
+        scenario_id,
+        raw_artifacts,
+        source_metadata,
+    )
     dataset_manifest = {
         "schema_name": "networkplanner_normalized_dataset",
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at_utc": utc_now(),
+        "pipeline": current_pipeline_metadata("normalize"),
         "scenario_id": scenario_id,
         "run_id": run_id,
         "raw_run_dir": str(raw_run_dir.resolve()),
@@ -500,7 +761,10 @@ def normalize_raw_run(raw_run_dir: Path, normalized_root: Path, write_parquet: b
         "sources": sorted({row["source"] for row in rows if row["source"]}),
         "evidence_layers": [layer for layer in EVIDENCE_ORDER if layer in {row["evidence_layer"] for row in rows}],
         "source_metadata": source_metadata,
-        "run_manifest": read_json(run_manifest_path) if run_manifest_path.exists() else {},
+        "run_manifest": run_manifest,
+        "raw_artifacts": raw_artifacts,
+        "execution": execution_summary,
+        "sim_export_readiness": sim_export_readiness,
         "parquet_status": parquet_status or "not_requested",
     }
     write_json(normalized_dir / "dataset_manifest.json", dataset_manifest)
@@ -509,6 +773,11 @@ def normalize_raw_run(raw_run_dir: Path, normalized_root: Path, write_parquet: b
 
 def summarize_normalized_run(normalized_run_dir: Path, analysis_root: Path) -> Path:
     dataset_manifest = read_json(normalized_run_dir / "dataset_manifest.json")
+    dataset_freshness = require_current_pipeline_stage(
+        dataset_manifest,
+        "normalize",
+        normalized_run_dir / "dataset_manifest.json",
+    )
     rows = load_rows_from_csv(normalized_run_dir / "events.csv")
     scenario_id = dataset_manifest["scenario_id"]
     run_id = dataset_manifest["run_id"]
@@ -570,6 +839,18 @@ def summarize_normalized_run(normalized_run_dir: Path, analysis_root: Path) -> P
     representative_metric_details: dict[str, dict[str, Any]] = {}
     preferred_evidence_layers = preferred_evidence_layers_for_scenario(scenario_id)
     sync_summary = summarize_sync_metadata(dataset_manifest, rows)
+    execution_summary = dataset_manifest.get("execution") or infer_execution_mode(
+        scenario_id,
+        dataset_manifest.get("run_manifest", {}),
+        dataset_manifest.get("source_metadata", {}),
+        rows,
+        dataset_manifest.get("raw_artifacts", {}),
+    )
+    sim_export_readiness = dataset_manifest.get("sim_export_readiness") or summarize_sim_export_readiness(
+        scenario_id,
+        dataset_manifest.get("raw_artifacts", {}),
+        dataset_manifest.get("source_metadata", {}),
+    )
     evidence_rows = [
         row
         for row in rows
@@ -650,8 +931,13 @@ def summarize_normalized_run(normalized_run_dir: Path, analysis_root: Path) -> P
 
     summary = {
         "schema_name": "networkplanner_run_summary",
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at_utc": utc_now(),
+        "pipeline": current_pipeline_metadata("summarize"),
+        "input_normalized_dataset": {
+            "path": str((normalized_run_dir / "dataset_manifest.json").resolve()),
+            "freshness": dataset_freshness,
+        },
         "scenario_id": scenario_id,
         "run_id": run_id,
         "scenario": dataset_manifest["scenario"],
@@ -664,11 +950,19 @@ def summarize_normalized_run(normalized_run_dir: Path, analysis_root: Path) -> P
         "representative_metrics": representative_metrics,
         "representative_metric_details": representative_metric_details,
         "sync": sync_summary,
+        "execution": execution_summary,
+        "sim_export_readiness": sim_export_readiness,
+        "freshness": {
+            "status": "current" if dataset_freshness["is_current"] else "stale",
+            "issues": dataset_freshness["issues"],
+        },
         "notes": {
             "preferred_evidence_layers": preferred_evidence_layers,
             "ui_visualization_rows": evidence_counts.get("ui_visualization_only", 0),
             "simulator_export_rows": evidence_counts.get("simulator_export", 0),
             "field_ground_truth_rows": evidence_counts.get("field_ground_truth", 0),
+            "sim_flow_monitor_export_present": sim_export_readiness.get("has_flow_monitor_csv", False),
+            "sim_link_model_export_present": sim_export_readiness.get("has_link_model_csv", False),
         },
     }
 
@@ -701,6 +995,8 @@ def format_metric(value: Any, scale: float = 1.0, suffix: str = "") -> str:
 def compare_field_and_sim(field_summary_path: Path, sim_summary_path: Path, output_dir: Path | None) -> Path:
     field_summary = read_json(field_summary_path)
     sim_summary = read_json(sim_summary_path)
+    field_summary_freshness = require_current_pipeline_stage(field_summary, "summarize", field_summary_path)
+    sim_summary_freshness = require_current_pipeline_stage(sim_summary, "summarize", sim_summary_path)
     if output_dir is None:
         output_dir = Path("logs/analysis/comparisons") / f"{field_summary['run_id']}__vs__{sim_summary['run_id']}"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -755,8 +1051,21 @@ def compare_field_and_sim(field_summary_path: Path, sim_summary_path: Path, outp
 
     comparison = {
         "schema_name": "networkplanner_field_vs_sim_comparison",
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at_utc": utc_now(),
+        "pipeline": current_pipeline_metadata("compare"),
+        "input_summaries": {
+            "field": {
+                "path": str(field_summary_path.resolve()),
+                "freshness": field_summary_freshness,
+                "execution": field_summary.get("execution", {}),
+            },
+            "sim": {
+                "path": str(sim_summary_path.resolve()),
+                "freshness": sim_summary_freshness,
+                "execution": sim_summary.get("execution", {}),
+            },
+        },
         "field_scenario_id": field_summary["scenario_id"],
         "field_run_id": field_summary["run_id"],
         "sim_scenario_id": sim_summary["scenario_id"],

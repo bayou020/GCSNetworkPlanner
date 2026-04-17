@@ -119,6 +119,7 @@ PublicationLogger::Context PublicationLogger::defaultContext(const QString &sour
             + QString::number(QCoreApplication::applicationPid()));
     context.rat = envString("NP_RAT");
     context.securityProfile = envString("NP_SECURITY_PROFILE");
+    context.executionMode = envString("NP_EXECUTION_MODE");
     context.syncMethod = envString("NP_SYNC_METHOD", QStringLiteral("unspecified"));
     context.syncNote = envString("NP_SYNC_NOTE");
     context.runNote = envString("NP_RUN_NOTE");
@@ -170,6 +171,9 @@ void PublicationLogger::configure(const Context &context)
 
     QVariantMap syncFields;
     syncFields.insert(QStringLiteral("status"), QStringLiteral("configured"));
+    if (!context.executionMode.isEmpty()) {
+        syncFields.insert(QStringLiteral("execution_mode"), context.executionMode);
+    }
     syncFields.insert(QStringLiteral("sync_method"), context.syncMethod);
     if (context.hasSyncOffset) {
         syncFields.insert(QStringLiteral("sync_offset_ms"), context.syncOffsetMs);
@@ -250,6 +254,9 @@ void PublicationLogger::logEvent(const QString &eventType, const QVariantMap &fi
     }
     if (!m_context.securityProfile.isEmpty()) {
         event.insert(QStringLiteral("security_profile"), m_context.securityProfile);
+    }
+    if (!m_context.executionMode.isEmpty()) {
+        event.insert(QStringLiteral("execution_mode"), m_context.executionMode);
     }
     if (!fields.contains(QStringLiteral("evidence_layer"))
         && shouldDefaultToFieldGroundTruth(eventType)) {
@@ -367,6 +374,9 @@ void PublicationLogger::writeMetadataFileLocked()
     }
     if (!m_context.securityProfile.isEmpty()) {
         metadata.insert(QStringLiteral("security_profile"), m_context.securityProfile);
+    }
+    if (!m_context.executionMode.isEmpty()) {
+        metadata.insert(QStringLiteral("execution_mode"), m_context.executionMode);
     }
     metadata.insert(QStringLiteral("sync_method"), m_context.syncMethod);
     if (m_context.hasSyncOffset) {
